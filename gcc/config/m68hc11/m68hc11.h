@@ -117,10 +117,40 @@ typedef int enum_machine_mode;
 
 /* Run-time compilation parameters selecting different hardware subsets.  */
 
+extern int target_flags;
+
 extern short *reg_renumber;	/* def in local_alloc.c */
 
+/* Macros used in the machine description to test the flags.  */
+
+/* 6811 specific options
+ *
+ * For 68HC12, the auto inc/dec mode is disabled by default. The reason
+ * is that for most programs, the reload pass will fail because it needs
+ * more registers to save the value of the indexed register after the
+ * memory access.  For simple programs, you can enable this
+ * with -mauto-incdec.
+ */
+
+#define MASK_SHORT              0002	/* Compile with 16-bit `int' */
+#define MASK_AUTO_INC_DEC       0004
+#define MASK_M6811              0010
+#define MASK_M6812              0020
+#define MASK_M68S12             0040
+#define MASK_NO_DIRECT_MODE     0100
+#define MASK_MIN_MAX            0200
+#define MASK_LONG_CALLS         0400
+
 #define TARGET_OP_TIME		(optimize && optimize_size == 0)
+#define TARGET_SHORT            (target_flags & MASK_SHORT)
+#define TARGET_M6811            (target_flags & MASK_M6811)
+#define TARGET_M6812            (target_flags & MASK_M6812)
+#define TARGET_M68S12           (target_flags & MASK_M68S12)
+#define TARGET_AUTO_INC_DEC     (target_flags & MASK_AUTO_INC_DEC)
+#define TARGET_MIN_MAX          (target_flags & MASK_MIN_MAX)
+#define TARGET_NO_DIRECT_MODE   (target_flags & MASK_NO_DIRECT_MODE)
 #define TARGET_RELAX            (TARGET_NO_DIRECT_MODE)
+#define TARGET_LONG_CALLS       (target_flags & MASK_LONG_CALLS)
 
 /* Default target_flags if no switches specified.  */
 #ifndef TARGET_DEFAULT
