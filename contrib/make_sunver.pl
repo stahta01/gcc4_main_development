@@ -73,15 +73,16 @@ if (-f $elfdump) {
 	# Ignore object name header for individual objects and archives.
 	next if (/:$/);
 
-	# Ignore table header lines.
-	next if (/^Symbol Table Section:/);
-	next if (/index.*value.*size/);
-
 	# Start of archive symbol table: start skipping.
 	if (/^Symbol Table: \(archive/) {
 	    $skip_arsym = 1;
 	    next;
 	}
+
+	# Ignore table header lines.
+	next if (/^Symbol Table Section:/);
+	next if (/^Symbol Table:/);
+	next if (/index.*value.*size/);
 
 	# Split table.
 	(undef, undef, undef, undef, $bind, $oth, undef, $shndx, $name) = split;
