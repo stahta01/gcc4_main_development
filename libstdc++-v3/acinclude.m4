@@ -3384,8 +3384,7 @@ AC_DEFUN([GLIBCXX_CHECK_GTHREADS], [
   AC_TRY_COMPILE([#include <unistd.h>],
     [
       // In case of POSIX threads check _POSIX_TIMEOUTS.
-      #if (defined(_PTHREADS) \
-	  && (!defined(_POSIX_TIMEOUTS) || _POSIX_TIMEOUTS <= 0))
+      #if (!defined(_POSIX_TIMEOUTS) || _POSIX_TIMEOUTS <= 0)
       #error
       #endif
     ], [ac_gthread_use_mutex_timedlock=1], [ac_gthread_use_mutex_timedlock=0])
