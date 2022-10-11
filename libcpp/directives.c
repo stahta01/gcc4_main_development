@@ -564,6 +564,27 @@ lex_macro_node (cpp_reader *pfile, bool is_def_or_undef)
   return NULL;
 }
 
+/* Return the closest location to node.  */
+static source_location
+_cpp_macro_location (cpp_reader *pfile, const unsigned char *name)
+{
+  if (pfile->buffer->file != NULL && pfile->buffer->line_base != NULL)
+    {
+      char *s = (char *)pfile->buffer->line_base;
+      char *eol = index (s, '\n');
+
+      s = strstr (s, (const char *)name);
+
+      /* Give up in case of line continuations and
+	 pfile->buffer->line_base points to another line.  */
+      if (s != NULL && s < eol)
+	return pfile->directive_line + 1 +
+	  CPP_BUF_COLUMN (pfile->buffer, (const unsigned char *)s);
+    }
+
+  return pfile->directive_line;
+}
+
 /* Process a #define directive.  Most work is done in macro.c.  */
 static void
 do_define (cpp_reader *pfile)
@@ -582,7 +603,9 @@ do_define (cpp_reader *pfile)
 
       if (_cpp_create_definition (pfile, node))
 	if (pfile->cb.define)
-	  pfile->cb.define (pfile, pfile->directive_line, node);
+	  pfile->cb.define (pfile,
+			    _cpp_macro_location (pfile, NODE_NAME (node)),
+			    node);
 
       node->flags &= ~NODE_USED;
     }
@@ -600,7 +623,9 @@ do_undef (cpp_reader *pfile)
 	pfile->cb.before_define (pfile);
 
       if (pfile->cb.undef)
-	pfile->cb.undef (pfile, pfile->directive_line, node);
+	pfile->cb.undef (pfile,
+			 _cpp_macro_location (pfile, NODE_NAME (node)),
+			 node);
 
       /* 6.10.3.5 paragraph 2: [#undef] is ignored if the specified
 	 identifier is not currently defined as a macro name.  */
@@ -784,12 +809,12 @@ do_include_common (cpp_reader *pfile, enum include_type type)
       /* Get out of macro context, if we are.  */
       skip_rest_of_line (pfile);
 
-      if (pfile->cb.include)
-	pfile->cb.include (pfile, pfile->directive_line,
-			   pfile->directive->name, fname, angle_brackets,
-			   buf);
-
+      location = _cpp_macro_location (pfile, (const unsigned char *)fname);
       _cpp_stack_include (pfile, fname, angle_brackets, type);
+
+      if (pfile->cb.include)
+	pfile->cb.include (pfile, location,
+			   pfile->directive->name, fname, angle_brackets, buf);
     }
 
   XDELETEVEC (fname);
@@ -1875,7 +1900,9 @@ do_ifdef (cpp_reader *pfile)
 		}
 	    }
 	  if (pfile->cb.used)
-	    pfile->cb.used (pfile, pfile->directive_line, node);
+	    pfile->cb.used (pfile,
+			    _cpp_macro_location (pfile, NODE_NAME (node)),
+			    node);
 	  check_eol (pfile, false);
 	}
     }
@@ -1921,7 +1948,9 @@ do_ifndef (cpp_reader *pfile)
 		}
 	    }
 	  if (pfile->cb.used)
-	    pfile->cb.used (pfile, pfile->directive_line, node);
+	    pfile->cb.used (pfile,
+			    _cpp_macro_location (pfile, NODE_NAME (node)),
+			    node);
 	  check_eol (pfile, false);
 	}
     }
@@ -2412,7 +2441,9 @@ cpp_pop_definition (cpp_reader *pfile, struct def_pragma_macro *c)
   if (node->type == NT_MACRO)
     {
       if (pfile->cb.undef)
-	pfile->cb.undef (pfile, pfile->directive_line, node);
+	pfile->cb.undef (pfile,
+			 _cpp_macro_location (pfile, NODE_NAME (node)),
+			 node);
       if (CPP_OPTION (pfile, warn_unused_macros))
 	_cpp_warn_if_unused_macro (pfile, node, NULL);
     }

@@ -2902,6 +2902,21 @@ cpp_token_val_index (cpp_token *tok)
     }
 }
 
+/* Compute the column number according to GNU rules.  */
+int
+cpp_buf_column (const unsigned char *base, const unsigned char *cur)
+{
+  int col = 0;
+  for (; base < cur; ++base)
+    {
+      if (*base == '\t')
+	col = 8 * (col / 8 + 1);
+      else
+	++col;
+    }
+  return col;
+}
+
 /* All tokens lexed in R after calling this function will be forced to have
    their source_location the same as the location referenced by P, until
    cpp_stop_forcing_token_locations is called for R.  */

@@ -36,7 +36,9 @@ along with this program; see the file COPYING3.  If not see
    record control characters that won't be included in the read size.  */
 #ifdef VMS
 # define FAB_C_VAR 2 /* variable length records (see Starlet fabdef.h) */
-# define STAT_SIZE_RELIABLE(ST) ((ST).st_fab_rfm != FAB_C_VAR)
+# define FAB_C_VFC 3 /* variable fixed control (see Starlet fabdef.h) */
+# define STAT_SIZE_RELIABLE(ST) \
+  ((ST).st_fab_rfm != FAB_C_VAR && (ST).st_fab_rfm != FAB_C_VFC)
 #else
 # define STAT_SIZE_RELIABLE(ST) true
 #endif
@@ -911,6 +913,7 @@ _cpp_stack_include (cpp_reader *pfile, const char *fname, int angle_brackets,
 {
   struct cpp_dir *dir;
   _cpp_file *file;
+  bool result;
 
   dir = search_path_head (pfile, fname, angle_brackets, type);
   if (!dir)
@@ -929,7 +932,25 @@ _cpp_stack_include (cpp_reader *pfile, const char *fname, int angle_brackets,
   if (file->pchname == NULL && file->err_no == 0 && type != IT_CMDLINE)
     pfile->line_table->highest_location--;
 
-  return _cpp_stack_file (pfile, file, type == IT_IMPORT);
+  result = _cpp_stack_file (pfile, file, type == IT_IMPORT);
+
+  if (pfile->cb.stack_include)
+    {
+      struct line_map *maps = LINEMAPS_MAPS (pfile->line_table, false);
+      unsigned int i, used = LINEMAPS_USED (pfile->line_table, false);
+
+      for (i = 0; i < used; i++)
+	{
+	  if (ORDINARY_MAP_FILE_NAME (&maps[i]) == file->path)
+	    {
+	      pfile->cb.stack_include (pfile, MAP_START_LOCATION (&maps[i]),
+				       fname, file->path, angle_brackets);
+	      break;
+	    }
+	}
+    }
+
+  return result;
 }
 
 /* Could not open FILE.  The complication is dependency output.  */

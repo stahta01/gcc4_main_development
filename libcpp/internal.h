@@ -60,9 +60,12 @@ struct cset_converter
     || (((prevc) == 'p' || (prevc) == 'P') \
         && CPP_OPTION (pfile, extended_numbers))))
 
+extern int cpp_buf_column (const unsigned char *line_base,
+			   const unsigned char *cur);
+
 #define CPP_OPTION(PFILE, OPTION) ((PFILE)->opts.OPTION)
 #define CPP_BUFFER(PFILE) ((PFILE)->buffer)
-#define CPP_BUF_COLUMN(BUF, CUR) ((CUR) - (BUF)->line_base)
+#define CPP_BUF_COLUMN(BUF, CUR) cpp_buf_column ((BUF)->line_base, (CUR))
 #define CPP_BUF_COL(BUF) CPP_BUF_COLUMN(BUF, (BUF)->cur)
 
 #define CPP_INCREMENT_LINE(PFILE, COLS_HINT) do { \

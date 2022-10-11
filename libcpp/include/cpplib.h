@@ -510,6 +510,15 @@ struct cpp_callbacks
   void (*dir_change) (cpp_reader *, const char *);
   void (*include) (cpp_reader *, source_location, const unsigned char *,
 		   const char *, int, const cpp_token **);
+  /* Called when an include file is about to be included. This is complementary
+     to the "include" callback above, providing additional parameters.
+     Second param is the first source location of the included file
+     Third param is the short name of the include file, as appeared in the
+     include directive.
+     Fourth param is the pathname of the include file
+     Fifth param is whether angle bracket is used in the include directive.  */
+  void (*stack_include) (cpp_reader *, source_location, const char *,
+			 const char *, int);
   void (*define) (cpp_reader *, source_location, cpp_hashnode *);
   void (*undef) (cpp_reader *, source_location, cpp_hashnode *);
   void (*ident) (cpp_reader *, source_location, const cpp_string *);

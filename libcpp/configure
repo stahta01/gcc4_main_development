@@ -2633,7 +2633,6 @@ target_os=$*
 IFS=$ac_save_IFS
 case $target_os in *\ *) target_os=`echo "$target_os" | sed 's/ /-/g'`;; esac
 
-
 # The aliases save the names the user supplied, while $host etc.
 # will get canonicalized.
 test -n "$target_alias" &&
