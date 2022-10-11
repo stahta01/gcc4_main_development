@@ -1,0 +1,11 @@
+# Have these compiled into libgcc.a
+
+LIB2ADD += \
+ $(srcdir)/config/lmp/memcpy.c \
+ $(srcdir)/config/lmp/memset.c \
+ $(srcdir)/config/lmp/__udivmod64.c \
+ $(srcdir)/config/lmp/__div64.c \
+ $(srcdir)/config/lmp/__udiv64.c \
+ $(srcdir)/config/lmp/__mod64.c \
+ $(srcdir)/config/lmp/__umod64.c \
+ $(srcdir)/config/lmp/__set_trampoline_parity.c 
