@@ -2,9 +2,9 @@
 # Configuration validation subroutine script.
 #   Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999,
 #   2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
-#   2011 Free Software Foundation, Inc.
+#   2011, 2012 Free Software Foundation, Inc.
 
-timestamp='2011-10-29'
+timestamp='2013-06-17'
 
 # This file is (in principle) common to ALL GNU software.
 # The presence of a machine in this file suggests that SOME GNU software
@@ -223,6 +223,12 @@ case $os in
 	-isc*)
 		basic_machine=`echo $1 | sed -e 's/86-.*/86-pc/'`
 		;;
+        -lynx*178)
+                os=-lynxos178
+                ;;
+        -lynx*5)
+                os=-lynxos5
+                ;;
 	-lynx*)
 		os=-lynxos
 		;;
@@ -263,6 +269,7 @@ case $basic_machine in
 	| ip2k | iq2000 \
 	| le32 | le64 \
 	| lm32 \
+	| lmp \
 	| m32c | m32r | m32rle | m68000 | m68k | m88k \
 	| maxq | mb | microblaze | mcore | mep | metag \
 	| mips | mipsbe | mipseb | mipsel | mipsle \
@@ -319,6 +326,9 @@ case $basic_machine in
 	c6x)
 		basic_machine=tic6x-unknown
 		;;
+	leon|leon[3-9])
+		basic_machine=sparc-$basic_machine
+		;;
 	m6811 | m68hc11 | m6812 | m68hc12 | picochip)
 		# Motorola 68HC11/12.
 		basic_machine=$basic_machine-unknown
@@ -367,6 +377,7 @@ case $basic_machine in
 	| clipper-* | craynv-* | cydra-* \
 	| d10v-* | d30v-* | dlx-* \
 	| elxsi-* \
+	| e500v[12]-* \
 	| f30[01]-* | f700-* | fido-* | fr30-* | frv-* | fx80-* \
 	| h8300-* | h8500-* \
 	| hppa-* | hppa1.[01]-* | hppa2.0-* | hppa2.0[nw]-* | hppa64-* \
@@ -374,7 +385,9 @@ case $basic_machine in
 	| i*86-* | i860-* | i960-* | ia64-* \
 	| ip2k-* | iq2000-* \
 	| le32-* | le64-* \
+	| leon-* | leon[3-9]-* \
 	| lm32-* \
+	| lmp-* \
 	| m32c-* | m32r-* | m32rle-* \
 	| m68000-* | m680[012346]0-* | m68360-* | m683?2-* | m68k-* \
 	| m88110-* | m88k-* | maxq-* | mcore-* | metag-* | microblaze-* \
@@ -615,6 +628,9 @@ case $basic_machine in
 	dpx2* | dpx2*-bull)
 		basic_machine=m68k-bull
 		os=-sysv3
+		;;
+	leon|leon[3-9]-*)
+		basic_machine=sparc-`echo $basic_machine | sed 's/-.*//'`
 		;;
 	ebmon29k)
 		basic_machine=a29k-amd
@@ -1486,6 +1502,9 @@ case $os in
 	-dicos*)
 		os=-dicos
 		;;
+        -pikeos*)
+                os=-elf
+                ;;
 	-nacl*)
 		;;
 	-none)
@@ -1753,6 +1772,33 @@ case $basic_machine in
 				;;
 		esac
 		basic_machine=`echo $basic_machine | sed "s/unknown/$vendor/"`
+		;;
+esac
+
+# Now deal with CPUs that should map to a canonical variant and might
+# require possible effects on the final os selection for ABI considerations.
+
+case $basic_machine in
+
+	# Turn e500v[12] into powerpc, then add a "spe" suffix for
+	# systems that expect it if we don't have one already.
+
+	e500v[12]*)
+		basic_machine=`echo $basic_machine | sed "s/e500v./powerpc/"`
+
+		case $os in
+			*spe)
+				;;
+			*linux*)
+				os=$os"spe"
+				;;
+		esac
+		;;
+
+	# Turn LEON into SPARC, but only for VxWorks
+
+        leon-wrs)
+                basic_machine=sparc-wrs
 		;;
 esac
 
