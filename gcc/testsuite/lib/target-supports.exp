@@ -519,6 +519,7 @@ proc check_profiling_available { test_what } {
 	     || [istarget fido-*-elf]
 	     || [istarget h8300-*-*]
 	     || [istarget lm32-*-*]
+	     || [istarget lmp-*-*]
 	     || [istarget m32c-*-elf]
 	     || [istarget m68k-*-elf]
 	     || [istarget m68k-*-uclinux*]

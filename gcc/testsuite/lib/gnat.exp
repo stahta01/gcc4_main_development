@@ -126,22 +126,17 @@ proc gnat_target_compile { source dest type options } {
     # GNAT_UNDER_TEST and the appropriate RTS.
     if { $gnat_target_current!="[current_target_name]" } {
 	set gnat_target_current "[current_target_name]"
-	if [info exists TOOL_OPTIONS] {
-	    set rtsdir "[get_multilibs ${TOOL_OPTIONS}]/libada"
-	} else {
-	    set rtsdir "[get_multilibs]/libada"
-	}
+	set rtsdir "${rootme}/ada/rts"
 	if [info exists TOOL_EXECUTABLE] {
 	    set GNAT_UNDER_TEST "$TOOL_EXECUTABLE"
 	} else {
 	    set GNAT_UNDER_TEST "[local_find_gnatmake]"
 	}
-        set GNAT_UNDER_TEST "$GNAT_UNDER_TEST --RTS=$rtsdir"
 
 	# gnatlink looks for system.ads itself and has no --RTS option, so
 	# specify via environment
-	setenv ADA_INCLUDE_PATH "$rtsdir/adainclude"
-	setenv ADA_OBJECTS_PATH "$rtsdir/adainclude"
+	setenv ADA_INCLUDE_PATH "$rtsdir"
+	setenv ADA_OBJECTS_PATH "$rtsdir"
 	# Always log so compilations can be repeated manually.
 	verbose -log "ADA_INCLUDE_PATH=$rtsdir/adainclude"
 	verbose -log "ADA_OBJECTS_PATH=$rtsdir/adainclude"
