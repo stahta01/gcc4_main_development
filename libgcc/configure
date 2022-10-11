@@ -2524,7 +2524,6 @@ fi
 # No prefix.
 target_subdir=${target_noncanonical}
 
-
 # Calculate toolexeclibdir
 # Also toolexecdir, though it's only used in toolexeclibdir
 case ${version_specific_libs} in

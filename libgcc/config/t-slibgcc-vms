@@ -17,6 +17,8 @@ SHLIB_SYMVEC = \
       -e "s/.* data.rel.ro \(.*\)/SYMBOL_VECTOR=(\1=DATA)/" \
       -e "s/.*\$$BSS\$$    \(.*\)/SYMBOL_VECTOR=(\1=DATA)/" \
       -e "s/.*\$$READONLY\$$ \(.*\)/SYMBOL_VECTOR=(\1=DATA)/"
+
+ifeq (0,1)
 SHLIB_LINK = \
   echo "case_sensitive=yes" > SYMVEC_$$$$.opt; \
   objdump --syms $(SHLIB_OBJS) | \
@@ -26,3 +28,6 @@ SHLIB_LINK = \
   -shared --for-linker=/noinform -o $(SHLIB_NAME) $(SHLIB_OBJS) \
   --for-linker=SYMVEC_$$$$.opt \
   --for-linker=gsmatch=equal,$(shlib_version)
+else
+SHLIB_LINK = echo $(SHLIB_OBJS) > $(SHLIB_NAME)
+endif

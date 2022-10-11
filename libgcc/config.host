@@ -1,6 +1,6 @@
 # libgcc host-specific configuration file.
 # Copyright 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007,
-# 2008, 2009, 2010, 2011, 2012 Free Software Foundation, Inc.
+# 2008, 2009, 2010, 2011, 2012, 2013 Free Software Foundation, Inc.
 
 #This file is part of GCC.
 
@@ -118,6 +118,9 @@ ia64-*-*)
 hppa*-*-*)
 	cpu_type=pa
 	;;
+lmp-*-*)
+        cpu_type=lmp
+        ;;
 lm32*-*-*)
 	cpu_type=lm32
 	;;
@@ -196,6 +199,9 @@ case ${host} in
 *-*-linux* | frv-*-*linux* | *-*-kfreebsd*-gnu | *-*-knetbsd*-gnu | *-*-gnu* | *-*-kopensolaris*-gnu)
   tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-linux"
   extra_parts="crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
+  ;;
+*-*-lynxos178)
+  tmake_file="$tmake_file t-lynx"
   ;;
 *-*-lynxos*)
   tmake_file="$tmake_file t-lynx $cpu_type/t-crtstuff t-crtstuff-pic t-libgcc-pic"
@@ -315,8 +321,9 @@ alpha*-dec-*vms*)
 	md_unwind_header=alpha/vms-unwind.h
 	;;
 arm-wrs-vxworks)
-	tmake_file="$tmake_file arm/t-arm arm/t-vxworks t-softfp-sfdf t-softfp-excl arm/t-softfp t-softfp"
+	tmake_file="$tmake_file arm/t-arm arm/t-elf arm/t-vxworks t-softfp-sfdf t-softfp-excl arm/t-softfp t-softfp"
 	extra_parts="$extra_parts crti.o crtn.o"
+	extra_parts="$extra_parts crtbegin.o crtbeginT.o crtend.o"
 	;;
 arm*-*-freebsd*)
 	tmake_file="$tmake_file arm/t-arm arm/t-strongarm-elf t-fdpbit"
@@ -528,9 +535,11 @@ x86_64-*-elf*)
 	;;
 i[34567]86-*-freebsd*)
 	tmake_file="${tmake_file} i386/t-freebsd i386/t-crtstuff"
+	md_unwind_header="i386/freebsd-unwind.h"
 	;;
 x86_64-*-freebsd*)
 	tmake_file="${tmake_file} i386/t-freebsd i386/t-crtstuff"
+	md_unwind_header="i386/freebsd-unwind.h"
 	;;
 i[34567]86-*-netbsdelf*)
 	;;
@@ -632,7 +641,7 @@ x86_64-*-mingw*)
 	if test x$enable_sjlj_exceptions = xyes; then
 		tmake_eh_file="i386/t-sjlj-eh"
 	else
-		tmake_eh_file="i386/t-dw2-eh"
+		tmake_eh_file="i386/t-seh-eh"
 	fi
 	# Shared libgcc DLL install dir depends on cross/native build.
 	if test x${build} = x${host} ; then
@@ -640,8 +649,8 @@ x86_64-*-mingw*)
 	else
 		tmake_dlldir_file="i386/t-dlldir-x"
 	fi
-	tmake_file="${tmake_file} ${tmake_eh_file} ${tmake_dlldir_file} i386/t-slibgcc-cygming i386/t-mingw32 t-dfprules i386/t-crtfm i386/t-chkstk"
-	extra_parts="$extra_parts crtfastmath.o"
+	tmake_file="${tmake_file} ${tmake_eh_file} ${tmake_dlldir_file} i386/t-slibgcc-cygming i386/t-cygming i386/t-mingw32 t-dfprules i386/t-crtfm i386/t-chkstk"
+	extra_parts="crtbegin.o crtend.o crtfastmath.o"
 	;;
 i[34567]86-*-interix[3-9]*)
 	tmake_file="$tmake_file i386/t-interix i386/t-chkstk"
@@ -665,6 +674,10 @@ ia64*-*-linux*)
 	;;
 ia64*-*-hpux*)
 	tmake_file="ia64/t-ia64 ia64/t-ia64-elf ia64/t-hpux t-slibgcc ia64/t-slibgcc-hpux t-slibgcc-hpux"
+	if test x$with_system_libunwind = xno ; then
+		tmake_file="${tmake_file} ia64/t-eh-ia64 ia64/t-eh-hpux"
+		md_unwind_header=ia64/hpux-unwind.h
+	fi
 	;;
 ia64-hp-*vms*)
 	tmake_file="$tmake_file ia64/t-ia64 ia64/t-eh-ia64 ia64/t-vms t-slibgcc-vms"
@@ -675,6 +688,10 @@ iq2000*-*-elf*)
 	tmake_file="iq2000/t-iq2000 t-fdpbit"
 	# Don't use default.
 	extra_parts=
+        ;;
+lmp-*-elf*)
+        extra_parts="$extra_parts crtbegin.o crtend.o crti.o crtn.o"
+        tmake_file="lmp/t-lmp t-fdpbit"
         ;;
 lm32-*-elf*)
         extra_parts="$extra_parts crti.o crtn.o"
@@ -864,7 +881,7 @@ powerpc-*-netbsd*)
 	tmake_file="$tmake_file rs6000/t-netbsd rs6000/t-crtstuff"
 	;;
 powerpc-*-eabispe*)
-	tmake_file="${tmake_file} rs6000/t-ppccomm rs6000/t-savresfgpr rs6000/t-crtstuff t-crtstuff-pic"
+	tmake_file="${tmake_file} rs6000/t-ppccomm rs6000/t-savresfgpr rs6000/t-crtstuff t-crtstuff-pic t-fdpbit"
 	extra_parts="$extra_parts crtbegin.o crtend.o crtbeginS.o crtendS.o crtbeginT.o ecrti.o ecrtn.o ncrti.o ncrtn.o"
 	;;
 powerpc-*-eabisimaltivec*)
@@ -876,7 +893,7 @@ powerpc-*-eabisim*)
 	extra_parts="$extra_parts crtbegin.o crtend.o crtbeginS.o crtendS.o crtbeginT.o ecrti.o ecrtn.o ncrti.o ncrtn.o"
 	;;
 powerpc-*-elf*)
-	tmake_file="${tmake_file} rs6000/t-ppccomm rs6000/t-crtstuff t-crtstuff-pic t-fdpbit"
+	tmake_file="${tmake_file} rs6000/t-ppccomm rs6000/t-savresfgpr rs6000/t-crtstuff t-crtstuff-pic t-fdpbit"
 	extra_parts="$extra_parts crtbeginS.o crtendS.o crtbeginT.o ecrti.o ecrtn.o ncrti.o ncrtn.o"
 	;;
 powerpc-*-eabialtivec*)
@@ -900,11 +917,15 @@ powerpc-*-linux* | powerpc64-*-linux*)
 	extra_parts="$extra_parts ecrti.o ecrtn.o ncrti.o ncrtn.o"
 	md_unwind_header=rs6000/linux-unwind.h
 	;;
-powerpc-wrs-vxworks|powerpc-wrs-vxworksae)
-	tmake_file="$tmake_file rs6000/t-ppccomm t-fdpbit"
+powerpc-wrs-vxworks|powerpc-wrs-vxworksae|powerpc-wrs-vxworksmils)
+	tmake_file="$tmake_file rs6000/t-ppccomm rs6000/t-savresfgpr t-fdpbit"
+	extra_parts="$extra_parts crtbegin.o crtbeginT.o crtend.o"
 	;;
+powerpc-*-lynxos178)
+        tmake_file="$tmake_file t-fdpbit"
+        ;;
 powerpc-*-lynxos*)
-	tmake_file="$tmake_file rs6000/t-lynx t-fdpbit"
+	tmake_file="$tmake_file rs6000/t-lynx rs6000/t-savresfgpr t-fdpbit"
 	;;
 powerpcle-*-elf*)
 	tmake_file="${tmake_file} rs6000/t-ppccomm rs6000/t-crtstuff t-crtstuff-pic t-fdpbit"
@@ -1013,8 +1034,8 @@ sparc-*-elf*)
 	*-leon[3-9]*)
 		;;
 	*)
-	  	tmake_file="sparc/t-softmul"
-	  	;;
+		tmake_file="sparc/t-softmul"
+		;;
 	esac
 	tmake_file="${tmake_file} t-fdpbit t-crtfm"
 	extra_parts="$extra_parts crti.o crtn.o crtfastmath.o"

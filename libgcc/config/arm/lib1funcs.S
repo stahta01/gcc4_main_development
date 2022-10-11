@@ -1353,8 +1353,27 @@ LSYM(Lover12):
 	do_pop	{r7}
 	RET
 	FUNC_END clear_cache
+#elif defined __vxworks
+	ARM_FUNC_START clear_cache
+.L1:
+	mcr	p15, 0, r0, c7, c11, 1	@ Clean data cache by MVA to PoU
+	mcr	p15, 0, r0, c7, c10, 4	@ Ensure visibility of the data
+					@ cleaned from the cache
+	mcr	p15, 0, r0, c7, c5, 1	@ Invalidate instruction cache by
+					@ MVA to PoU
+	mcr	p15, 0, r0, c7, c5, 7	@ Invalidate branch predictor by
+					@ MVA to PoU
+	mcr	p15, 0, r0, c7, c10, 4	@ Ensure completion of the
+					@ invalidations
+	mcr	p15, 0, r0, c7, c5, 4	@ Synchronize fetched instruction
+					@ stream
+	add	r0, r0, #4		@ Increment MVA
+	cmp	r0, r1
+	ble	.L1			@ Loop if MVA <= End Address
+	RET
+	FUNC_END clear_cache
 #else
-#error "This is only for ARM EABI GNU/Linux"
+#error "This is only for ARM EABI GNU/Linux or ARM VxWorks"
 #endif
 #endif /* L_clear_cache */
 /* ------------------------------------------------------------------------ */

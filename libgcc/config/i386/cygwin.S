@@ -57,6 +57,7 @@
    by the OS virtual memory manger are allocated in correct sequence.  */
 
 	.global ___chkstk
+        .global ___gnu_chkstk
 	.global	__alloca
 #ifdef _WIN64
 /* __alloca is a normal function call, which uses %rcx as the argument.  */
@@ -70,6 +71,7 @@ __alloca:
    %r8 and %r9, which leaves us with %rax, %r10, and %r11 to use.  */
 	.align	4
 ___chkstk:
+___gnu_chkstk:
 	popq	%r11			/* pop return address */
 	cfi_adjust_cfa_offset(-8)	/* indicate return address in r11 */
 	cfi_register(%rip, %r11)
@@ -97,6 +99,7 @@ ___chkstk:
 	cfi_endproc()
 #else
 	cfi_startproc()
+___gnu_chkstk:
 ___chkstk:
 __alloca:
 	pushl	%ecx			/* save temp */

@@ -4,11 +4,23 @@ LIBGCC2_DEBUG_CFLAGS =
 # Extra libgcc2 modules used by gthr-vxworks.h functions
 LIB2ADD = $(srcdir)/config/vxlib.c $(srcdir)/config/vxlib-tls.c
 
-# This ensures that the correct target headers are used; some
-# VxWorks system headers have names that collide with GCC's
-# internal (host) headers, e.g. regs.h.
-LIBGCC2_INCLUDES = -nostdinc -I \
-  `case "/$$(MULTIDIR)" in \
-     */mrtp*) echo $(WIND_USR)/h ;; \
-     *) echo $(WIND_BASE)/target/h ;; \
-   esac`
+# Some VxWorks system headers have names that collide with GCC's
+# internal (host) headers, e.g. regs.h. We circumvent that by adding
+# -nostdinc to clear the gcc source includes from the way, then add
+# back paths to the system includes which the sources might need.
+
+# We also add the local object paths, which we do get via -B during
+# regular cross builds (libgcc compiled with xgcc -B.../gcc etc), but
+# not in canadian setups (libgcc compiled with an installed cross,
+# xxx-vxworks-gcc etc, no -B involved).
+
+LIBGCC2_INCLUDES = -nostdinc \
+  `case "$(GCC_CFLAGS)" in \
+     *mvthreads*) echo -I $(WIND_BASE)/target/vThreads/h ;; \
+     *) case "/$(MULTIDIR)" in \
+          */mrtp*) echo -I $(WIND_USR)/h ;; \
+          *) echo -I $(WIND_BASE)/target/h ;; \
+        esac \
+   esac` \
+   -I $(WIND_BASE)/target/val/h \
+   -isystem $(gcc_objdir)/include -isystem $(gcc_objdir)/include-fixed

@@ -1,7 +1,7 @@
 /* Specialized bits of code needed to support construction and
    destruction of file-scope objects in C++ code.
    Copyright (C) 1991, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
-   2002, 2003, 2004, 2005, 2006, 2007, 2009, 2010, 2011
+   2002, 2003, 2004, 2005, 2006, 2007, 2009, 2010, 2011, 2014
    Free Software Foundation, Inc.
    Contributed by Ron Guilmette (rfg@monkeys.com).
 
@@ -64,6 +64,10 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #include "tm.h"
 #include "libgcc_tm.h"
 #include "unwind-dw2-fde.h"
+
+#if !TARGET_USE_JCR_SECTION
+#undef JCR_SECTION_NAME
+#endif
 
 #ifndef FORCE_CODE_SECTION_ALIGN
 # define FORCE_CODE_SECTION_ALIGN
@@ -566,6 +570,68 @@ __do_global_ctors_1(void)
   register_tm_clones ();
 #endif /* USE_TM_CLONE_REGISTRY */
 }
+
+#if defined (USE_EH_FRAME_REGISTRY) && defined (__vxworks)
+
+/* For VxWorks, we provide two facilities here:
+
+   o frame registration/deregistration entry points, with names that the WRS
+     muncher will recognize and arrange to call if exposed.
+
+   o _ctors and _dtors arrays that the kernel module loader knows to read
+     and process when it has been configured for this purpose (c++ constructor
+     strategy set to automatic).
+
+   Two configuration variants are available for builders, once they decide that
+   crtstuff objects are needed at all:
+
+   o from crtbeginT.o: the registration functions are exposed and the _cdtors
+     arrays are not included.
+
+   o from crtbegin.o: the registration functions are static and the _cdtors
+     arrays are included.  */
+
+#if !defined (CRTSTUFFT_O)
+#define CDTOR_VISIBILITY static
+#else
+#define CDTOR_VISIBILITY
+#endif
+
+#ifdef __RTP__
+/* 101 is the highest user level priority allowed by VxWorks.  */
+#define CTOR_NAME _STI__101____crtbe_register_frame
+#define DTOR_NAME _STI__101____crtbe_deregister_frame
+#define CTOR_ATTRIBUTE __attribute__((constructor(101)))
+#define DTOR_ATTRIBUTE __attribute__((destructor(101)))
+
+#else
+#define CTOR_NAME _GLOBAL__I___crtbe_register_frame
+#define DTOR_NAME _GLOBAL__D___crtbe_deregister_frame
+#define CTOR_ATTRIBUTE __attribute__((unused))
+#define DTOR_ATTRIBUTE __attribute__((unused))
+#endif
+
+CDTOR_VISIBILITY void CTOR_NAME (void) CTOR_ATTRIBUTE;
+CDTOR_VISIBILITY void DTOR_NAME (void) DTOR_ATTRIBUTE;
+
+CDTOR_VISIBILITY void CTOR_NAME (void)
+{
+  static struct object object;
+  __register_frame_info (__EH_FRAME_BEGIN__, &object);
+}
+
+CDTOR_VISIBILITY void DTOR_NAME (void)
+{
+  __deregister_frame_info (__EH_FRAME_BEGIN__);
+}
+
+#if !defined (CRTSTUFFT_O)
+func_ptr _dtors [] = {DTOR_NAME, 0};
+func_ptr _ctors [] = {CTOR_NAME, 0};
+#endif
+
+#endif /* USE_EH_FRAME_REGISTRY && __vxworks */
+
 #endif /* USE_EH_FRAME_REGISTRY || JCR_SECTION_NAME || USE_TM_CLONE_REGISTRY */
 
 #else /* ! INIT_SECTION_ASM_OP && ! HAS_INIT_SECTION */

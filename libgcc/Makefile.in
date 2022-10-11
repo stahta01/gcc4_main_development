@@ -1074,6 +1074,11 @@ install-leaf: $(install-shared) $(install-libunwind)
 	chmod 644 $(DESTDIR)$(inst_libdir)/libgcov.a
 	$(RANLIB) $(DESTDIR)$(inst_libdir)/libgcov.a
 
+	if test `echo *.ci 2> /dev/null` != "*.ci"; then		\
+	  $(mkinstalldirs) $(DESTDIR)$(inst_libdir)/libgcc-ci;		\
+	  $(INSTALL_DATA) *.ci $(DESTDIR)$(inst_libdir)/libgcc-ci;	\
+	fi
+
 	parts="$(INSTALL_PARTS)";				\
 	for file in $$parts; do					\
 	  rm -f $(DESTDIR)$(inst_libdir)/$$file;		\
