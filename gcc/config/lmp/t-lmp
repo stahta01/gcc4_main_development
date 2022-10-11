@@ -1,0 +1,3 @@
+# Multilibs for LMP
+MULTILIB_OPTIONS = mcpu=gr6
+MULTILIB_DIRNAMES = gr6
