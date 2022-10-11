@@ -29,7 +29,11 @@ typedef enum {
   IS_CONSTRUCTOR,
   IS_DESTRUCTOR,
   IS_COPY_CONSTRUCTOR,
-  IS_TEMPLATE
+  IS_TEMPLATE,
+  IS_TEMPLATE_PARM_INDEX,
+  MAYBE_CLASS,
+  GET_TEMPLATE_PARM_DECL,
+  GET_DECL_TEMPLATE
 } cpp_operation;
 
 extern location_t decl_sloc (const_tree, bool);

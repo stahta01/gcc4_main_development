@@ -196,4 +196,8 @@ msel-sched-dont-check-control-spec
 Target Report Var(mflag_sel_sched_dont_check_control_spec) Init(0)
 Don't generate checks for control speculation in selective scheduling
 
+mlongcall
+Target Report Mask(LONG_CALL)
+Generate long branch call instructions
+
 ; This comment is to ensure we retain the blank line above.

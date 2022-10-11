@@ -4973,6 +4973,21 @@ set_unique_reg_note (rtx insn, enum reg_note kind, rtx datum)
       if (GET_CODE (datum) == ASM_OPERANDS)
 	return NULL_RTX;
 
+      /* Don't add REG_EQUAL/REG_EQUIV notes on a single_set destination which
+	 isn't a REG or a SUBREG of REG.  Such notes are invalid, could lead
+	 to bogus assumptions downstream (e.g. that a (set MEM) couldn't trap),
+	 and many callers just don't care checking.  Note that we might have
+	 single_set (insn) == 0 here, typically from reload attaching REG_EQUAL
+	 to USEs for inheritance processing purposes.  */
+      {
+	rtx set  = single_set (insn);
+
+	if (set && ! (REG_P (SET_DEST (set))
+		      || (GET_CODE (SET_DEST (set)) == SUBREG
+			  && REG_P (SUBREG_REG (SET_DEST (set))))))
+	  return NULL_RTX;
+      }
+
       if (note)
 	{
 	  XEXP (note, 0) = datum;

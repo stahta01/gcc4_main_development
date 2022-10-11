@@ -149,18 +149,19 @@ struct GTY ((chain_next ("%h.next"))) loop {
 
   /* An integer giving an estimate on nb_iterations.  Unlike
      nb_iterations_upper_bound, there is no guarantee that it is at least
-     nb_iterations.  */
+     nb_iterations.  Only valid if estimate_available is true.  */
   double_int nb_iterations_estimate;
 
-  bool any_upper_bound;
-  bool any_estimate;
+  unsigned int estimate_available : 1;
+  unsigned int any_upper_bound : 1;
+  unsigned int any_estimate : 1;
+  unsigned int can_be_parallel : 1;
 
-  /* True if the loop can be parallel.  */
-  bool can_be_parallel;
-
-  /* An integer estimation of the number of iterations.  Estimate_state
-     describes what is the state of the estimation.  */
-  enum loop_estimation estimate_state;
+  /* Optimization hints.  */
+  unsigned int hint_no_unroll : 1;
+  unsigned int hint_unroll : 1;
+  unsigned int hint_no_vector : 1;
+  unsigned int hint_vector : 1;
 
   /* Upper bound on number of iterations of a loop.  */
   struct nb_iter_bound *bounds;

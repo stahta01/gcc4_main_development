@@ -3006,9 +3006,9 @@ estimate_numbers_of_iterations_loop (struct loop *loop, bool use_undefined_p)
   double_int bound;
 
   /* Give up if we already have tried to compute an estimation.  */
-  if (loop->estimate_state != EST_NOT_COMPUTED)
+  if (loop->estimate_available)
     return;
-  loop->estimate_state = EST_AVAILABLE;
+  loop->estimate_available = true;
   loop->any_upper_bound = false;
   loop->any_estimate = false;
 
@@ -3373,7 +3373,7 @@ free_numbers_of_iterations_estimates_loop (struct loop *loop)
   struct nb_iter_bound *bound, *next;
 
   loop->nb_iterations = NULL;
-  loop->estimate_state = EST_NOT_COMPUTED;
+  loop->estimate_available = false;
   for (bound = loop->bounds; bound; bound = next)
     {
       next = bound->next;

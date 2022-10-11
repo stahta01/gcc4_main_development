@@ -672,7 +672,7 @@ extern int fixuplabelno;
   mcall-openbsd: %(startfile_openbsd)     ; \
                : %(startfile_default)     }"
 
-#define	STARTFILE_DEFAULT_SPEC "ecrti.o%s crtbegin.o%s"
+#define	STARTFILE_DEFAULT_SPEC ""
 
 #undef	LIB_SPEC
 #define	LIB_SPEC "\
@@ -686,7 +686,7 @@ extern int fixuplabelno;
   mcall-openbsd: %(lib_openbsd)     ; \
                : %(lib_default)     }"
 
-#define LIB_DEFAULT_SPEC "-lc"
+#define LIB_DEFAULT_SPEC ""
 
 #undef	ENDFILE_SPEC
 #define	ENDFILE_SPEC "\
@@ -702,7 +702,7 @@ extern int fixuplabelno;
 
 #define CRTSAVRES_DEFAULT_SPEC ""
 
-#define	ENDFILE_DEFAULT_SPEC "crtend.o%s ecrtn.o%s"
+#define	ENDFILE_DEFAULT_SPEC ""
 
 /* Motorola ADS support.  */
 #define LIB_ADS_SPEC "--start-group -lads -lc --end-group"

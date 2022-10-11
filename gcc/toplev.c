@@ -179,6 +179,7 @@ const char *user_label_prefix;
 
 FILE *asm_out_file;
 FILE *aux_info_file;
+FILE *callgraph_info_file = NULL;
 FILE *stack_usage_file = NULL;
 FILE *dump_file = NULL;
 const char *dump_file_name;
@@ -562,7 +563,7 @@ compile_file (void)
   /* Compilation is now finished except for writing
      what's left of the symbol table output.  */
 
-  if (flag_syntax_only || flag_wpa)
+  if (flag_wpa)
     return;
 
   timevar_start (TV_PHASE_GENERATE);
@@ -571,6 +572,9 @@ compile_file (void)
 
   /* This must also call cgraph_finalize_compilation_unit.  */
   lang_hooks.decls.final_write_globals ();
+
+  if (flag_syntax_only)
+    return;
 
   if (seen_error ())
     {
@@ -1035,17 +1039,13 @@ alloc_for_identifier_to_locale (size_t len)
   return ggc_alloc_atomic (len);
 }
 
+const char *stack_usage_qual[] = { "static", "dynamic", "dynamic,bounded" };
+
 /* Output stack usage information.  */
 void
 output_stack_usage (void)
 {
   static bool warning_issued = false;
-  enum stack_usage_kind_type { STATIC = 0, DYNAMIC, DYNAMIC_BOUNDED };
-  const char *stack_usage_kind_str[] = {
-    "static",
-    "dynamic",
-    "dynamic,bounded"
-  };
   HOST_WIDE_INT stack_usage = current_function_static_stack_size;
   enum stack_usage_kind_type stack_usage_kind;
 
@@ -1059,58 +1059,50 @@ output_stack_usage (void)
       return;
     }
 
-  stack_usage_kind = STATIC;
+  stack_usage_kind = SU_STATIC;
 
   /* Add the maximum amount of space pushed onto the stack.  */
   if (current_function_pushed_stack_size > 0)
     {
       stack_usage += current_function_pushed_stack_size;
-      stack_usage_kind = DYNAMIC_BOUNDED;
+      stack_usage_kind = SU_DYNAMIC_BOUNDED;
     }
 
   /* Now on to the tricky part: dynamic stack allocation.  */
   if (current_function_allocates_dynamic_stack_space)
     {
       if (current_function_has_unbounded_dynamic_stack_size)
-	stack_usage_kind = DYNAMIC;
+	stack_usage_kind = SU_DYNAMIC;
       else
-	stack_usage_kind = DYNAMIC_BOUNDED;
+	stack_usage_kind = SU_DYNAMIC_BOUNDED;
 
       /* Add the size even in the unbounded case, this can't hurt.  */
       stack_usage += current_function_dynamic_stack_size;
     }
 
+  if (flag_callgraph_info & CALLGRAPH_INFO_STACK_USAGE)
+    {
+      struct cgraph_final_info *cfi
+	= cgraph_final_info (current_function_decl);
+      cfi->stack_usage = stack_usage;
+      cfi->stack_usage_kind = stack_usage_kind;
+    }
+
   if (flag_stack_usage)
     {
-      expanded_location loc
-	= expand_location (DECL_SOURCE_LOCATION (current_function_decl));
-      const char *raw_id, *id;
-
-      /* Strip the scope prefix if any.  */
-      raw_id = lang_hooks.decl_printable_name (current_function_decl, 2);
-      id = strrchr (raw_id, '.');
-      if (id)
-	id++;
-      else
-	id = raw_id;
-
-      fprintf (stack_usage_file,
-	       "%s:%d:%d:%s\t"HOST_WIDE_INT_PRINT_DEC"\t%s\n",
-	       lbasename (loc.file),
-	       loc.line,
-	       loc.column,
-	       id,
-	       stack_usage,
-	       stack_usage_kind_str[stack_usage_kind]);
+      print_decl_identifier (stack_usage_file, current_function_decl,
+			     PRINT_DECL_ORIGIN | PRINT_DECL_NAME);
+      fprintf (stack_usage_file, "\t"HOST_WIDE_INT_PRINT_DEC"\t%s\n",
+	       stack_usage, stack_usage_qual[stack_usage_kind]);
     }
 
   if (warn_stack_usage >= 0)
     {
-      if (stack_usage_kind == DYNAMIC)
+      if (stack_usage_kind == SU_DYNAMIC)
 	warning (OPT_Wstack_usage_, "stack usage might be unbounded");
       else if (stack_usage > warn_stack_usage)
 	{
-	  if (stack_usage_kind == DYNAMIC_BOUNDED)
+	  if (stack_usage_kind == SU_DYNAMIC_BOUNDED)
 	    warning (OPT_Wstack_usage_, "stack usage might be %wd bytes",
 		     stack_usage);
 	  else
@@ -1435,6 +1427,10 @@ process_options (void)
   if (dwarf_strict < 0)
     dwarf_strict = 0;
 
+  /* And select a default dwarf level.  */
+  if (dwarf_version < 0)
+    dwarf_version = 2;
+
   /* A lot of code assumes write_symbols == NO_DEBUG if the debugging
      level is 0.  */
   if (debug_info_level == DINFO_LEVEL_NONE)
@@ -1614,6 +1610,10 @@ process_options (void)
     diagnostic_classify_diagnostic (global_dc, OPT_Wcoverage_mismatch,
                                     DK_ERROR, UNKNOWN_LOCATION);
 
+  /* Always enable -fextra-slocs with -fdump-xref or with -fdump-scos.  */
+  if (flag_dump_xref || flag_dump_scos)
+    flag_extra_slocs = 1;
+
   /* Save the current optimization options.  */
   optimization_default_node = build_optimization_node ();
   optimization_current_node = optimization_default_node;
@@ -1764,6 +1764,10 @@ lang_dependent_init (const char *name)
       /* If stack usage information is desired, open the output file.  */
       if (flag_stack_usage)
 	stack_usage_file = open_auxiliary_file ("su");
+
+      /* If call graph information is desired, open the output file.  */
+      if (flag_callgraph_info)
+	callgraph_info_file = open_auxiliary_file ("ci");
     }
 
   /* This creates various _DECL nodes, so needs to be called after the
@@ -1868,6 +1872,12 @@ finalize (bool no_backend)
 
   if (stack_usage_file)
     fclose (stack_usage_file);
+
+  if (callgraph_info_file)
+    {
+      dump_cgraph_final_vcg (callgraph_info_file);
+      fclose (callgraph_info_file);
+    }
 
   if (!no_backend)
     {

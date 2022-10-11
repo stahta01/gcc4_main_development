@@ -224,3 +224,7 @@
 
 /* Static stack checking is supported by means of probes.  */
 #define STACK_CHECK_STATIC_BUILTIN 1
+
+/* AIX already uses descriptors for its standard calling sequence.  */
+#undef USE_RUNTIME_DESCRIPTORS
+#define USE_RUNTIME_DESCRIPTORS 0

@@ -2835,6 +2835,10 @@ compensate_edge (edge e)
       seq = get_insns ();
       end_sequence ();
 
+      after = next_active_insn (BB_HEAD (target));
+      if (BLOCK_FOR_INSN (after) == target)
+	set_insn_locators (seq, INSN_LOCATOR (after));
+
       insert_insn_on_edge (seq, e);
       return true;
     }

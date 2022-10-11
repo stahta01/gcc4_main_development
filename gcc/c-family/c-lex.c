@@ -36,6 +36,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "splay-tree.h"
 #include "debug.h"
 #include "target.h"
+#include "tree-pass.h"
+#include "cpp-id-data.h"
+#include "c-family/c-xref.h"
 
 /* We may keep statistics about how long which files took to compile.  */
 static int header_time, body_time;
@@ -60,6 +63,13 @@ static void cb_ident (cpp_reader *, unsigned int, const cpp_string *);
 static void cb_def_pragma (cpp_reader *, unsigned int);
 static void cb_define (cpp_reader *, unsigned int, cpp_hashnode *);
 static void cb_undef (cpp_reader *, unsigned int, cpp_hashnode *);
+static void cb_define_xref (cpp_reader *, unsigned int, cpp_hashnode *);
+static void cb_used_xref (cpp_reader *, unsigned int, cpp_hashnode *);
+static void cb_undef_xref (cpp_reader *, unsigned int, cpp_hashnode *);
+static void cb_include_xref (cpp_reader *, unsigned int, const unsigned char *,
+			     const char *, int, const cpp_token **);
+static void cb_stack_include_xref
+	(cpp_reader *, unsigned int, const char *, const char *, int);
 
 void
 init_c_lex (void)
@@ -84,6 +94,15 @@ init_c_lex (void)
   cb->def_pragma = cb_def_pragma;
   cb->valid_pch = c_common_valid_pch;
   cb->read_pch = c_common_read_pch;
+
+  if (flag_dump_xref)
+    {
+      cb->define = cb_define_xref;
+      cb->undef = cb_undef_xref;
+      cb->used = cb_used_xref;
+      cb->include = cb_include_xref;
+      cb->stack_include = cb_stack_include_xref;
+    }
 
   /* Set the debug callbacks if we can use them.  */
   if ((debug_info_level == DINFO_LEVEL_VERBOSE
@@ -282,6 +301,59 @@ cb_undef (cpp_reader * ARG_UNUSED (pfile), source_location loc,
   const struct line_map *map = linemap_lookup (line_table, loc);
   (*debug_hooks->undef) (SOURCE_LINE (map, loc),
 			 (const char *) NODE_NAME (node));
+}
+
+/* #define callback for xref info.  */
+static void
+cb_define_xref (cpp_reader *pfile ATTRIBUTE_UNUSED, source_location loc, cpp_hashnode *node)
+{
+  if (loc > RESERVED_LOCATION_COUNT)
+    generate_macro_reference ((const char *)NODE_NAME (node), loc, '\0',
+			      node->value.macro->fun_like);
+}
+
+/* #undef callback for xref info.  */
+static void
+cb_undef_xref (cpp_reader *pfile ATTRIBUTE_UNUSED, source_location loc,
+	       cpp_hashnode *node)
+{
+  if (loc > RESERVED_LOCATION_COUNT)
+    generate_macro_reference ((const char *)NODE_NAME (node), loc, 'm', 0);
+}
+
+/* macro use callback for xref info.  */
+static void
+cb_used_xref (cpp_reader *pfile ATTRIBUTE_UNUSED, source_location loc,
+	      cpp_hashnode *node)
+{
+  if (loc > RESERVED_LOCATION_COUNT)
+    generate_macro_reference ((const char *)NODE_NAME (node), loc, 'r', 0);
+}
+
+static source_location include_loc = UNKNOWN_LOCATION;
+static const char *include_path = NULL;
+
+static void
+cb_stack_include_xref (cpp_reader *pfile ATTRIBUTE_UNUSED,
+		       source_location loc,
+		       const char *header ATTRIBUTE_UNUSED,
+		       const char *path,
+		       int angle_brackets ATTRIBUTE_UNUSED)
+{
+  include_loc = loc;
+  include_path = path;
+}
+
+static void
+cb_include_xref (cpp_reader *pfile ATTRIBUTE_UNUSED,
+		 source_location loc,
+		 const unsigned char *directive ATTRIBUTE_UNUSED,
+		 const char *header ATTRIBUTE_UNUSED,
+		 int angle_brackets,
+		 const cpp_token **comments ATTRIBUTE_UNUSED)
+{
+  if (loc > RESERVED_LOCATION_COUNT)
+    generate_include_reference (include_path, loc, include_loc, angle_brackets);
 }
 
 /* Read a token and return its type.  Fill *VALUE with its value, if
@@ -492,7 +564,7 @@ c_lex_with_flags (tree *value, location_t *loc, unsigned char *cpp_flags,
       *value = build_int_cst (integer_type_node, tok->val.pragma);
       break;
 
-      /* These tokens should not be visible outside cpplib.  */
+    /* These tokens should not be visible outside cpplib.  */
     case CPP_HEADER_NAME:
     case CPP_MACRO_ARG:
       gcc_unreachable ();

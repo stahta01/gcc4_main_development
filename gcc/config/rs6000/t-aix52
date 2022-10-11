@@ -20,8 +20,8 @@
 # Build the libraries for pthread and all of the 
 # different processor models
 
-MULTILIB_OPTIONS	= pthread maix64
+MULTILIB_OPTIONS	= pthread # maix64
 
-MULTILIB_DIRNAMES	= pthread ppc64
+MULTILIB_DIRNAMES	= pthread # ppc64
 
 MULTILIB_MATCHES	= 

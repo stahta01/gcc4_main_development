@@ -1035,6 +1035,14 @@ make_goto_expr_edges (basic_block bb)
       assign_discriminator (e->goto_locus, label_bb);
       if (e->goto_locus)
 	e->goto_block = gimple_block (goto_t);
+      if (gimple_goto_loop_no_unroll_p (goto_t))
+	e->flags |= EDGE_LOOP_NO_UNROLL;
+      if (gimple_goto_loop_unroll_p (goto_t))
+	e->flags |= EDGE_LOOP_UNROLL;
+      if (gimple_goto_loop_no_vector_p (goto_t))
+	e->flags |= EDGE_LOOP_NO_VECTOR;
+      if (gimple_goto_loop_vector_p (goto_t))
+	e->flags |= EDGE_LOOP_VECTOR;
       gsi_remove (&last, true);
       return;
     }
@@ -1448,9 +1456,10 @@ group_case_labels (void)
 static bool
 gimple_can_merge_blocks_p (basic_block a, basic_block b)
 {
-  gimple stmt;
+  gimple stmt_a, stmt_b;
   gimple_stmt_iterator gsi;
   gimple_seq phis;
+  location_t locus;
 
   if (!single_succ_p (a))
     return false;
@@ -1469,27 +1478,51 @@ gimple_can_merge_blocks_p (basic_block a, basic_block b)
 
   /* If A ends by a statement causing exceptions or something similar, we
      cannot merge the blocks.  */
-  stmt = last_stmt (a);
-  if (stmt && stmt_ends_bb_p (stmt))
+  stmt_a = last_stmt (a);
+  if (stmt_a && stmt_ends_bb_p (stmt_a))
     return false;
 
   /* Do not allow a block with only a non-local label to be merged.  */
-  if (stmt
-      && gimple_code (stmt) == GIMPLE_LABEL
-      && DECL_NONLOCAL (gimple_label_label (stmt)))
+  if (stmt_a
+      && gimple_code (stmt_a) == GIMPLE_LABEL
+      && DECL_NONLOCAL (gimple_label_label (stmt_a)))
     return false;
 
   /* Examine the labels at the beginning of B.  */
+  stmt_b = NULL;
   for (gsi = gsi_start_bb (b); !gsi_end_p (gsi); gsi_next (&gsi))
     {
       tree lab;
-      stmt = gsi_stmt (gsi);
-      if (gimple_code (stmt) != GIMPLE_LABEL)
+      stmt_b = gsi_stmt (gsi);
+      if (gimple_code (stmt_b) != GIMPLE_LABEL)
 	break;
-      lab = gimple_label_label (stmt);
+      lab = gimple_label_label (stmt_b);
 
-      /* Do not remove user forced labels or for -O0 any user labels.  */
-      if (!DECL_ARTIFICIAL (lab) && (!optimize || FORCED_LABEL (lab)))
+      /* Do not remove user forced labels or, when not optimizing CFG, any
+	 user labels.  */
+      if (!DECL_ARTIFICIAL (lab) && (!optimize_cfg || FORCED_LABEL (lab)))
+	return false;
+    }
+
+  locus = single_succ_edge (a)->goto_locus;
+
+  /* If the edge is the only place in GIMPLE which holds some unique locus,
+     prevent merging the block when not optimizing CFG.  */
+  if (!optimize_cfg && locus)
+    {
+      if (!(stmt_a && gimple_location (stmt_a) == locus)
+	  && !(stmt_b && gimple_location (stmt_b) == locus))
+	return false;
+
+      /* If B is the end of function's block, A (most likely) ends with
+	 a user RETURN.  If the function returns a value, there will be
+	 insns in block A with the same locus but they might be optimized
+	 out later, so pretend that the RETURN holds a unique locus.  */
+      if (optimize
+	  && stmt_b
+	  && !VOID_TYPE_P (TREE_TYPE (TREE_TYPE (current_function_decl)))
+	  && gimple_location (stmt_b) == cfun->function_end_locus
+	  && locus != cfun->function_end_locus)
 	return false;
     }
 
@@ -4922,12 +4955,16 @@ gimple_make_forwarder_block (edge fallthru)
   basic_block dummy, bb;
   tree var;
   gimple_stmt_iterator gsi;
+  bool forward_location_p;
 
   dummy = fallthru->src;
   bb = fallthru->dest;
 
   if (single_pred_p (bb))
     return;
+
+  /* We can forward location info if we have only one predecessor.  */
+  forward_location_p = single_pred_p (dummy);
 
   /* If we redirected a branch we must create new PHI nodes at the
      start of BB.  */
@@ -4941,7 +4978,8 @@ gimple_make_forwarder_block (edge fallthru)
       SSA_NAME_DEF_STMT (var) = new_phi;
       gimple_phi_set_result (phi, make_ssa_name (SSA_NAME_VAR (var), phi));
       add_phi_arg (new_phi, gimple_phi_result (phi), fallthru,
-		   UNKNOWN_LOCATION);
+		   forward_location_p
+		   ? gimple_phi_arg_location (phi, 0) : UNKNOWN_LOCATION);
     }
 
   /* Add the arguments we have stored on edges.  */

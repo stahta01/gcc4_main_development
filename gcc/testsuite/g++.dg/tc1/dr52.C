@@ -16,8 +16,8 @@ private:
 struct B1 : B {};
 struct B2 : B {};
 
-struct C
-{ // { dg-error "C" }
+struct C  // { dg-error "C" }
+{
   void foo(void);
 };
 

@@ -4453,6 +4453,7 @@ initializer_constant_valid_for_bitfield_p (tree value)
       }
 
     case INTEGER_CST:
+    case REAL_CST:
       return true;
 
     case VIEW_CONVERT_EXPR:
@@ -4476,10 +4477,10 @@ typedef struct {
 } oc_outer_state;
 
 static unsigned HOST_WIDE_INT
-  output_constructor (tree, unsigned HOST_WIDE_INT, unsigned int,
-		      oc_outer_state *);
+output_constructor (tree, unsigned HOST_WIDE_INT, unsigned int, bool,
+		    oc_outer_state *);
 
-/* Output assembler code for constant EXP to FILE, with no label.
+/* Output assembler code for constant EXP, with no label.
    This includes the pseudo-op such as ".int" or ".byte", and a newline.
    Assumes output_addressed_constants has been done on EXP already.
 
@@ -4497,10 +4498,14 @@ static unsigned HOST_WIDE_INT
    for a structure constructor that wants to produce more than SIZE bytes.
    But such constructors will never be generated for any possible input.
 
-   ALIGN is the alignment of the data in bits.  */
+   ALIGN is the alignment of the data in bits.
 
-void
-output_constant (tree exp, unsigned HOST_WIDE_INT size, unsigned int align)
+   If REVERSE is true, EXP is interpreted in reverse storage order wrt the
+   target order.  */
+
+static void
+output_constant_1 (tree exp, unsigned HOST_WIDE_INT size, unsigned int align,
+		   bool reverse)
 {
   enum tree_code code;
   unsigned HOST_WIDE_INT thissize;
@@ -4597,6 +4602,8 @@ output_constant (tree exp, unsigned HOST_WIDE_INT size, unsigned int align)
     case REFERENCE_TYPE:
     case OFFSET_TYPE:
     case FIXED_POINT_TYPE:
+      if (reverse)
+	exp = fold_flip_storage_order (exp);
       if (! assemble_integer (expand_expr (exp, NULL_RTX, VOIDmode,
 					   EXPAND_INITIALIZER),
 			      MIN (size, thissize), align, 0))
@@ -4607,13 +4614,19 @@ output_constant (tree exp, unsigned HOST_WIDE_INT size, unsigned int align)
       if (TREE_CODE (exp) != REAL_CST)
 	error ("initializer for floating value is not a floating constant");
       else
-	assemble_real (TREE_REAL_CST (exp), TYPE_MODE (TREE_TYPE (exp)), align);
+	{
+	  if (reverse)
+	    exp = fold_flip_storage_order (exp);
+	  assemble_real (TREE_REAL_CST (exp), TYPE_MODE (TREE_TYPE (exp)),
+			 align);
+	}
       break;
 
     case COMPLEX_TYPE:
-      output_constant (TREE_REALPART (exp), thissize / 2, align);
-      output_constant (TREE_IMAGPART (exp), thissize / 2,
-		       min_align (align, BITS_PER_UNIT * (thissize / 2)));
+      output_constant_1 (TREE_REALPART (exp), thissize / 2, align, reverse);
+      output_constant_1 (TREE_IMAGPART (exp), thissize / 2,
+		         min_align (align, BITS_PER_UNIT * (thissize / 2)),
+			 reverse);
       break;
 
     case ARRAY_TYPE:
@@ -4621,32 +4634,25 @@ output_constant (tree exp, unsigned HOST_WIDE_INT size, unsigned int align)
       switch (TREE_CODE (exp))
 	{
 	case CONSTRUCTOR:
-	    output_constructor (exp, size, align, NULL);
+	  output_constructor (exp, size, align, reverse, NULL);
 	  return;
 	case STRING_CST:
-	  thissize = MIN ((unsigned HOST_WIDE_INT)TREE_STRING_LENGTH (exp),
-			  size);
+	  thissize
+	    = MIN ((unsigned HOST_WIDE_INT)TREE_STRING_LENGTH (exp), size);
 	  assemble_string (TREE_STRING_POINTER (exp), thissize);
 	  break;
 
 	case VECTOR_CST:
 	  {
-	    int elt_size;
-	    tree link;
-	    unsigned int nalign;
-	    enum machine_mode inner;
-
-	    inner = TYPE_MODE (TREE_TYPE (TREE_TYPE (exp)));
-	    nalign = MIN (align, GET_MODE_ALIGNMENT (inner));
-
-	    elt_size = GET_MODE_SIZE (inner);
-
-	    link = TREE_VECTOR_CST_ELTS (exp);
-	    output_constant (TREE_VALUE (link), elt_size, align);
+	    enum machine_mode inner = TYPE_MODE (TREE_TYPE (TREE_TYPE (exp)));
+	    unsigned int nalign = MIN (align, GET_MODE_ALIGNMENT (inner));
+	    int elt_size = GET_MODE_SIZE (inner);
+	    tree link = TREE_VECTOR_CST_ELTS (exp);
+	    output_constant_1 (TREE_VALUE (link), elt_size, align, reverse);
 	    thissize = elt_size;
-	    while ((link = TREE_CHAIN (link)) != NULL)
+	    while ((link = TREE_CHAIN (link)) != NULL_TREE)
 	      {
-		output_constant (TREE_VALUE (link), elt_size, nalign);
+		output_constant_1 (TREE_VALUE (link), elt_size, nalign, reverse);
 		thissize += elt_size;
 	      }
 	    break;
@@ -4659,7 +4665,7 @@ output_constant (tree exp, unsigned HOST_WIDE_INT size, unsigned int align)
     case RECORD_TYPE:
     case UNION_TYPE:
       gcc_assert (TREE_CODE (exp) == CONSTRUCTOR);
-      output_constructor (exp, size, align, NULL);
+      output_constructor (exp, size, align, reverse, NULL);
       return;
 
     case ERROR_MARK:
@@ -4673,6 +4679,11 @@ output_constant (tree exp, unsigned HOST_WIDE_INT size, unsigned int align)
     assemble_zeros (size - thissize);
 }
 
+void
+output_constant (tree exp, unsigned HOST_WIDE_INT size, unsigned int align)
+{
+  output_constant_1 (exp, size, align, false);
+}
 
 /* Subroutine of output_constructor, used for computing the size of
    arrays of unspecified length.  VAL must be a CONSTRUCTOR of an array
@@ -4725,25 +4736,23 @@ typedef struct {
 
   /* Received arguments.  */
   tree exp;                     /* Constructor expression.  */
+  tree type;                    /* Type of constructor expression.  */
   unsigned HOST_WIDE_INT size;  /* # bytes to output - pad if necessary.  */
   unsigned int align;           /* Known initial alignment.  */
-
-  /* Constructor expression data.  */
-  tree type;       /* Expression type.  */
-  tree field;      /* Current field decl in a record.  */
-  tree min_index;  /* Lower bound if specified for an array.  */
+  tree min_index;               /* Lower bound if specified for an array.  */
 
   /* Output processing state.  */
   HOST_WIDE_INT total_bytes;  /* # bytes output so far / current position.  */
-  bool byte_buffer_in_use;    /* Whether byte ...  */
-  int byte;                   /* ... contains part of a bitfield byte yet to
-			         be output.  */
-
+  int byte;                   /* Part of a bitfield byte yet to be output.  */
   int last_relative_index;    /* Implicit or explicit index of the last
 				 array element output within a bitfield.  */
+  bool byte_buffer_in_use;    /* Whether BYTE is in use.  */
+  bool reverse;               /* Whether reverse storage order is in use.  */
+
   /* Current element.  */
-  tree val;    /* Current element value.  */
-  tree index;  /* Current element index.  */
+  tree field;      /* Current field decl in a record.  */
+  tree val;        /* Current element value.  */
+  tree index;      /* Current element index.  */
 
 } oc_local_state;
 
@@ -4771,7 +4780,7 @@ output_constructor_array_range (oc_local_state *local)
       if (local->val == NULL_TREE)
 	assemble_zeros (fieldsize);
       else
-	output_constant (local->val, fieldsize, align2);
+	output_constant_1 (local->val, fieldsize, align2, local->reverse);
 
       /* Count its size.  */
       local->total_bytes += fieldsize;
@@ -4855,17 +4864,18 @@ output_constructor_regular_field (oc_local_state *local)
   if (local->val == NULL_TREE)
     assemble_zeros (fieldsize);
   else
-    output_constant (local->val, fieldsize, align2);
+    output_constant_1 (local->val, fieldsize, align2, local->reverse);
 
   /* Count its size.  */
   local->total_bytes += fieldsize;
 }
 
-/* Helper for output_constructor.  From the current LOCAL and OUTER states,
-   output an element that is a true bitfield or part of an outer one.  */
+/* Helper for output_constructor.  From the current LOCAL, output an element
+   that is a true bitfield or part of an outer one.  BIT_OFFSET is the offset
+   from the start of a possibly ongoing outer byte buffer.  */
 
 static void
-output_constructor_bitfield (oc_local_state *local, oc_outer_state *outer)
+output_constructor_bitfield (oc_local_state *local, unsigned int bit_offset)
 {
   /* Bit size of this element.  */
   HOST_WIDE_INT ebitsize
@@ -4892,7 +4902,7 @@ output_constructor_bitfield (oc_local_state *local, oc_outer_state *outer)
   /* Bit position of this element from the start of a possibly ongoing
      outer byte buffer.  */
   HOST_WIDE_INT byte_relative_ebitpos
-      = ((outer ? outer->bit_offset : 0) + constructor_relative_ebitpos);
+    = bit_offset + constructor_relative_ebitpos;
 
   /* From the start of a possibly ongoing outer byte buffer, offsets to
      the first bit of this element and to the first bit past the end of
@@ -4916,8 +4926,7 @@ output_constructor_bitfield (oc_local_state *local, oc_outer_state *outer)
       return;
     }
 
-  /* If this field does not start in this (or, next) byte,
-     skip some bytes.  */
+  /* If this field does not start in this (or next) byte, skip some bytes.  */
   if (next_offset / BITS_PER_UNIT != local->total_bytes)
     {
       /* Output remnant of any bit field in previous bytes.  */
@@ -4949,13 +4958,12 @@ output_constructor_bitfield (oc_local_state *local, oc_outer_state *outer)
      pending data, then retrieve the new pending data afterwards.  */
   if (TREE_CODE (local->val) == CONSTRUCTOR)
     {
-      oc_outer_state output_state;
-
-      output_state.bit_offset = next_offset % BITS_PER_UNIT;
-      output_state.byte = local->byte;
+      oc_outer_state temp_state;
+      temp_state.bit_offset = next_offset % BITS_PER_UNIT;
+      temp_state.byte = local->byte;
       local->total_bytes
-	  += output_constructor (local->val, 0, 0, &output_state);
-      local->byte = output_state.byte;
+	+= output_constructor (local->val, 0, 0, local->reverse, &temp_state);
+      local->byte = temp_state.byte;
       return;
     }
 
@@ -4970,8 +4978,7 @@ output_constructor_bitfield (oc_local_state *local, oc_outer_state *outer)
       HOST_WIDE_INT next_byte = next_offset / BITS_PER_UNIT;
       HOST_WIDE_INT next_bit = next_offset % BITS_PER_UNIT;
 
-      /* Advance from byte to byte
-	 within this element when necessary.  */
+      /* Advance from byte to byte within this element when necessary.  */
       while (next_byte != local->total_bytes)
 	{
 	  assemble_integer (GEN_INT (local->byte), 1, BITS_PER_UNIT, 1);
@@ -4979,11 +4986,9 @@ output_constructor_bitfield (oc_local_state *local, oc_outer_state *outer)
 	  local->byte = 0;
 	}
 
-      /* Number of bits we can process at once
-	 (all part of the same byte).  */
-      this_time = MIN (end_offset - next_offset,
-		       BITS_PER_UNIT - next_bit);
-      if (BYTES_BIG_ENDIAN)
+      /* Number of bits we can process at once (all part of the same byte).  */
+      this_time = MIN (end_offset - next_offset, BITS_PER_UNIT - next_bit);
+      if (local->reverse ? !BYTES_BIG_ENDIAN : BYTES_BIG_ENDIAN)
 	{
 	  /* On big-endian machine, take the most significant bits
 	     first (of the bits that are significant)
@@ -5060,31 +5065,32 @@ output_constructor_bitfield (oc_local_state *local, oc_outer_state *outer)
    caller output state of relevance in recursive invocations.  */
 
 static unsigned HOST_WIDE_INT
-output_constructor (tree exp, unsigned HOST_WIDE_INT size,
-		    unsigned int align, oc_outer_state * outer)
+output_constructor (tree exp, unsigned HOST_WIDE_INT size, unsigned int align,
+		    bool reverse, oc_outer_state *outer)
 {
   unsigned HOST_WIDE_INT cnt;
   constructor_elt *ce;
-
   oc_local_state local;
 
   /* Setup our local state to communicate with helpers.  */
   local.exp = exp;
+  local.type = TREE_TYPE (exp);
   local.size = size;
   local.align = align;
+  if (TREE_CODE (local.type) == ARRAY_TYPE && TYPE_DOMAIN (local.type))
+    local.min_index = TYPE_MIN_VALUE (TYPE_DOMAIN (local.type));
+  else
+    local.min_index = NULL_TREE;
 
   local.total_bytes = 0;
   local.byte_buffer_in_use = outer != NULL;
   local.byte = outer ? outer->byte : 0;
-
-  local.type = TREE_TYPE (exp);
-
   local.last_relative_index = -1;
-
-  local.min_index = NULL_TREE;
-  if (TREE_CODE (local.type) == ARRAY_TYPE
-      && TYPE_DOMAIN (local.type) != NULL_TREE)
-    local.min_index = TYPE_MIN_VALUE (TYPE_DOMAIN (local.type));
+  /* The storage order is specified for every aggregate type.  */
+  if (AGGREGATE_TYPE_P (local.type))
+    local.reverse = TYPE_REVERSE_STORAGE_ORDER (local.type);
+  else
+    local.reverse = reverse;
 
   gcc_assert (HOST_BITS_PER_WIDE_INT >= BITS_PER_UNIT);
 
@@ -5097,9 +5103,10 @@ output_constructor (tree exp, unsigned HOST_WIDE_INT size,
      (even if the initializer in a source program incorrectly contains
      more one).  */
 
-  local.field = NULL_TREE;
   if (TREE_CODE (local.type) == RECORD_TYPE)
     local.field = TYPE_FIELDS (local.type);
+  else
+    local.field = NULL_TREE;
 
   for (cnt = 0;
        VEC_iterate (constructor_elt, CONSTRUCTOR_ELTS (exp), cnt, ce);
@@ -5110,10 +5117,7 @@ output_constructor (tree exp, unsigned HOST_WIDE_INT size,
 
       /* The element in a union constructor specifies the proper field
 	 or index.  */
-      if ((TREE_CODE (local.type) == RECORD_TYPE
-	   || TREE_CODE (local.type) == UNION_TYPE
-	   || TREE_CODE (local.type) == QUAL_UNION_TYPE)
-	  && ce->index != NULL_TREE)
+      if (RECORD_OR_UNION_TYPE_P (local.type) && ce->index != NULL_TREE)
 	local.field = ce->index;
 
       else if (TREE_CODE (local.type) == ARRAY_TYPE)
@@ -5145,9 +5149,18 @@ output_constructor (tree exp, unsigned HOST_WIDE_INT size,
 		   || !CONSTRUCTOR_BITFIELD_P (local.field)))
 	output_constructor_regular_field (&local);
 
-      /* For a true bitfield or part of an outer one.  */
+      /* For a true bitfield or part of an outer one.  Only INTEGER_CSTs are
+	 supported for scalar fields, so we may need to convert first.  */
       else
-	output_constructor_bitfield (&local, outer);
+        {
+	  if (TREE_CODE (local.val) == REAL_CST)
+	    local.val
+	      = fold_unary (VIEW_CONVERT_EXPR,
+			    build_nonstandard_integer_type
+			    (TYPE_PRECISION (TREE_TYPE (local.val)), 0),
+			    local.val);
+	  output_constructor_bitfield (&local, outer ? outer->bit_offset : 0);
+	}
     }
 
   /* If we are not at toplevel, save the pending data for our caller.
@@ -5785,8 +5798,10 @@ finish_aliases_1 (void)
 	  if (! (p->emitted_diags & ALIAS_DIAG_TO_UNDEF)
 	      && ! lookup_attribute ("weakref", DECL_ATTRIBUTES (p->decl)))
 	    {
-	      error ("%q+D aliased to undefined symbol %qE",
-		     p->decl, p->target);
+               const char *id = IDENTIFIER_POINTER (p->target);
+               if (!(*id >= '0' && *id <= '9'))
+                 error ("%q+D aliased to undefined symbol %qE",
+                        p->decl, p->target);
 	      p->emitted_diags |= ALIAS_DIAG_TO_UNDEF;
 	    }
 	}
@@ -6290,6 +6305,7 @@ default_section_type_flags (tree decl, const char *name, int reloc)
   if (strcmp (name, ".bss") == 0
       || strncmp (name, ".bss.", 5) == 0
       || strncmp (name, ".gnu.linkonce.b.", 16) == 0
+      || strcmp (name, ".persistent.bss") == 0
       || strcmp (name, ".sbss") == 0
       || strncmp (name, ".sbss.", 6) == 0
       || strncmp (name, ".gnu.linkonce.sb.", 17) == 0)

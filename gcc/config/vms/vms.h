@@ -1,5 +1,5 @@
 /* Definitions of target machine GNU compiler. VMS common version.
-   Copyright (C) 2003-2009,2011 Free Software Foundation, Inc.
+   Copyright (C) 2003-2009, 2011, 2013 Free Software Foundation, Inc.
    Contributed by Douglas B Rupp (rupp@gnat.com).
 
 This file is part of GCC.
@@ -46,6 +46,8 @@ extern void vms_c_register_includes (const char *, const char *, int);
 #undef TARGET_ABI_OPEN_VMS
 #define TARGET_ABI_OPEN_VMS 1
 
+#define DWARF2_LOCATION_LISTS_SUPPORT_MISSING_ON_TARGET 1
+
 /* "long" is 32 bits, but 64 bits for Ada.  */
 #undef LONG_TYPE_SIZE
 #define LONG_TYPE_SIZE 32
@@ -65,3 +67,6 @@ extern void vms_c_register_includes (const char *, const char *, int);
 /* VMS doesn't support other sections than .text for code.  */
 
 #define TARGET_ASM_FUNCTION_SECTION vms_function_section
+
+#undef TARGET_ASM_FILE_END
+#define TARGET_ASM_FILE_END vms_file_end

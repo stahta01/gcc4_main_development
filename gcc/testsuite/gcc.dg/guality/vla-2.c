@@ -1,5 +1,6 @@
 /* PR debug/42801 */
-/* { dg-do run } */
+/* xfailed for AdaCore per LC14-010 */
+/* { dg-do run { xfail *-*-* } } */
 /* { dg-options "-g" } */
 
 void __attribute__((noinline))
@@ -13,7 +14,7 @@ fn2 (int i)
 {
   int a[i];
   fn1 (a, i);
-  fn1 (a, i);		/* { dg-final { gdb-test 16 "sizeof (a)" "5 * sizeof (int)" } } */
+  fn1 (a, i);		/* { dg-final { gdb-test 16 "sizeof (a)" "5 * sizeof (int)"  { xfail *-*-* } } } */
   return i;
 }
 
@@ -22,7 +23,7 @@ fn3 (int i)
 {
   int a[i];
   fn1 (a, i);
-  fn1 (a, i);		/* { dg-final { gdb-test 25 "sizeof (a)" "6 * sizeof (int)" } } */
+  fn1 (a, i);		/* { dg-final { gdb-test 25 "sizeof (a)" "6 * sizeof (int)" { xfail *-*-* } } } */
   return i;
 }
 

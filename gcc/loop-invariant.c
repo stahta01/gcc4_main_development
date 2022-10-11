@@ -47,6 +47,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "cfgloop.h"
 #include "expr.h"
 #include "recog.h"
+#include "target.h"
 #include "output.h"
 #include "function.h"
 #include "flags.h"
@@ -782,7 +783,22 @@ check_dependency (basic_block bb, df_ref use, bitmap depends_on)
 
   defs = DF_REF_CHAIN (use);
   if (!defs)
-    return true;
+    {
+      unsigned int regno = DF_REF_REGNO (use);
+
+      /* If this is the use of an uninitialized argument register that is
+	 likely to be spilled, do not move it lest this might extend its
+	 lifetime and cause reload to die.  This can occur for a call to
+	 a function taking complex number arguments and moving the insns
+	 preparing the arguments without moving the call itself wouldn't
+	 gain much in practice.  */
+      if ((DF_REF_FLAGS (use) & DF_HARD_REG_LIVE)
+	  && FUNCTION_ARG_REGNO_P (regno)
+	  && targetm.class_likely_spilled_p (REGNO_REG_CLASS (regno)))
+	return false;
+
+      return true;
+    }
 
   if (defs->next)
     return false;
@@ -1401,16 +1417,15 @@ replace_uses (struct invariant *inv, rtx reg, bool in_group)
   return 1;
 }
 
-/* Move invariant INVNO out of the LOOP.  Returns true if this succeeds, false
-   otherwise.  */
+/* Move invariant INVNO to the end of basic block BB.  If CLEAR_LOC is true,
+   clear its locator.  Return true on success, false otherwise.  */
 
 static bool
-move_invariant_reg (struct loop *loop, unsigned invno)
+move_invariant_reg (unsigned invno, basic_block bb, bool clear_loc)
 {
   struct invariant *inv = VEC_index (invariant_p, invariants, invno);
   struct invariant *repr = VEC_index (invariant_p, invariants, inv->eqto);
   unsigned i;
-  basic_block preheader = loop_preheader_edge (loop)->src;
   rtx reg, set, dest, note;
   bitmap_iterator bi;
   int regno = -1;
@@ -1429,7 +1444,7 @@ move_invariant_reg (struct loop *loop, unsigned invno)
 	{
 	  EXECUTE_IF_SET_IN_BITMAP (inv->depends_on, 0, i, bi)
 	    {
-	      if (!move_invariant_reg (loop, i))
+	      if (!move_invariant_reg (i, bb, clear_loc))
 		goto fail;
 	    }
 	}
@@ -1459,7 +1474,9 @@ move_invariant_reg (struct loop *loop, unsigned invno)
 	goto fail;
 
       emit_insn_after (gen_move_insn (dest, reg), inv->insn);
-      reorder_insns (inv->insn, inv->insn, BB_END (preheader));
+      reorder_insns (inv->insn, inv->insn, BB_END (bb));
+      if (clear_loc)
+	INSN_LOCATOR (inv->insn) = 0;
 
       /* If there is a REG_EQUAL note on the insn we just moved, and the
 	 insn is in a basic block that is not always executed or the note
@@ -1475,7 +1492,7 @@ move_invariant_reg (struct loop *loop, unsigned invno)
     }
   else
     {
-      if (!move_invariant_reg (loop, repr->invno))
+      if (!move_invariant_reg (repr->invno, bb, clear_loc))
 	goto fail;
       reg = repr->reg;
       regno = repr->orig_regno;
@@ -1503,17 +1520,39 @@ fail:
   return false;
 }
 
+/* Return true if BB contains no active instructions.  */
+
+static bool
+empty_bb_p (basic_block bb)
+{
+  rtx insn = BB_END (bb);
+
+  while (true)
+    {
+      if (insn == BB_HEAD (bb))
+	return true;
+      if (active_insn_p (insn))
+	return false;
+      insn = PREV_INSN (insn);
+    }
+}
+
 /* Move selected invariant out of the LOOP.  Newly created regs are marked
    in TEMPORARY_REGS.  */
 
 static void
 move_invariants (struct loop *loop)
 {
+  const basic_block preheader = loop_preheader_edge (loop)->src;
+  const bool loc_from_preheader
+    = !empty_bb_p (preheader) || single_pred_p (preheader);
   struct invariant *inv;
   unsigned i;
 
+  /* We clear the locator of the moved invariants unless we cannot get it from
+     the preheader to avoid having them inherit an unrelated locator.  */
   FOR_EACH_VEC_ELT (invariant_p, invariants, i, inv)
-    move_invariant_reg (loop, i);
+    move_invariant_reg (i, preheader, loc_from_preheader);
   if (flag_ira_loop_pressure && resize_reg_info ())
     {
       FOR_EACH_VEC_ELT (invariant_p, invariants, i, inv)

@@ -77,6 +77,7 @@ struct lower_data
 
 static void lower_stmt (gimple_stmt_iterator *, struct lower_data *);
 static void lower_gimple_bind (gimple_stmt_iterator *, struct lower_data *);
+static void lower_try_catch (gimple_stmt_iterator *, struct lower_data *);
 static void lower_gimple_return (gimple_stmt_iterator *, struct lower_data *);
 static void lower_builtin_setjmp (gimple_stmt_iterator *);
 
@@ -376,31 +377,28 @@ lower_stmt (gimple_stmt_iterator *gsi, struct lower_data *data)
       return;
 
     case GIMPLE_TRY:
-      {
-	bool try_cannot_fallthru;
-	lower_sequence (gimple_try_eval (stmt), data);
-	try_cannot_fallthru = data->cannot_fallthru;
-	data->cannot_fallthru = false;
-	lower_sequence (gimple_try_cleanup (stmt), data);
-	/* See gimple_stmt_may_fallthru for the rationale.  */
-	if (gimple_try_kind (stmt) == GIMPLE_TRY_FINALLY)
-	  {
-	    data->cannot_fallthru |= try_cannot_fallthru;
-	    gsi_next (gsi);
-	    return;
-	  }
-      }
-      break;
+      if (gimple_try_kind (stmt) == GIMPLE_TRY_CATCH)
+	lower_try_catch (gsi, data);
+      else
+	{
+	  /* It must be a GIMPLE_TRY_FINALLY.  */
+	  bool cannot_fallthru;
+	  lower_sequence (gimple_try_eval (stmt), data);
+	  cannot_fallthru = data->cannot_fallthru;
 
-    case GIMPLE_CATCH:
-      data->cannot_fallthru = false;
-      lower_sequence (gimple_catch_handler (stmt), data);
-      break;
-
-    case GIMPLE_EH_FILTER:
-      data->cannot_fallthru = false;
-      lower_sequence (gimple_eh_filter_failure (stmt), data);
-      break;
+	  /* The finally clause is always executed after the try clause,
+	     so if it does not fall through, then the try-finally will not
+	     fall through.  Otherwise, if the try clause does not fall
+	     through, then when the finally clause falls through it will
+	     resume execution wherever the try clause was going.  So the
+	     whole try-finally will only fall through if both the try
+	     clause and the finally clause fall through.  */
+	  data->cannot_fallthru = false;
+	  lower_sequence (gimple_try_cleanup (stmt), data);
+	  data->cannot_fallthru |= cannot_fallthru;
+	  gsi_next (gsi);
+	}
+      return;
 
     case GIMPLE_EH_ELSE:
       lower_sequence (gimple_eh_else_n_body (stmt), data);
@@ -521,6 +519,67 @@ lower_gimple_bind (gimple_stmt_iterator *gsi, struct lower_data *data)
   /* The GIMPLE_BIND no longer carries any useful information -- kill it.  */
   gsi_insert_seq_before (gsi, gimple_bind_body (stmt), GSI_SAME_STMT);
   gsi_remove (gsi, false);
+}
+
+/* Same as above, but for a GIMPLE_TRY_CATCH.  */
+
+static void
+lower_try_catch (gimple_stmt_iterator *gsi, struct lower_data *data)
+{
+  bool cannot_fallthru;
+  gimple stmt = gsi_stmt (*gsi);
+  gimple_stmt_iterator i;
+
+  /* We don't handle GIMPLE_TRY_FINALLY.  */
+  gcc_assert (gimple_try_kind (stmt) == GIMPLE_TRY_CATCH);
+
+  lower_sequence (gimple_try_eval (stmt), data);
+  cannot_fallthru = data->cannot_fallthru;
+
+  i = gsi_start (gimple_try_cleanup (stmt));
+  switch (gimple_code (gsi_stmt (i)))
+    {
+    case GIMPLE_CATCH:
+      /* We expect to see a sequence of GIMPLE_CATCH stmts, each with a
+	 catch expression and a body.  The whole try/catch may fall
+	 through iff any of the catch bodies falls through.  */
+      for (; !gsi_end_p (i); gsi_next (&i))
+	{
+	  data->cannot_fallthru = false;
+	  lower_sequence (gimple_catch_handler (gsi_stmt (i)), data);
+	  if (!data->cannot_fallthru)
+	    cannot_fallthru = false;
+	}
+      break;
+
+    case GIMPLE_EH_FILTER:
+      /* The exception filter expression only matters if there is an
+	 exception.  If the exception does not match EH_FILTER_TYPES,
+	 we will execute EH_FILTER_FAILURE, and we will fall through
+	 if that falls through.  If the exception does match
+	 EH_FILTER_TYPES, the stack unwinder will continue up the
+	 stack, so we will not fall through.  We don't know whether we
+	 will throw an exception which matches EH_FILTER_TYPES or not,
+	 so we just ignore EH_FILTER_TYPES and assume that we might
+	 throw an exception which doesn't match.  */
+      data->cannot_fallthru = false;
+      lower_sequence (gimple_eh_filter_failure (gsi_stmt (i)), data);
+      if (!data->cannot_fallthru)
+	cannot_fallthru = false;
+      break;
+
+    default:
+      /* This case represents statements to be executed when an
+	 exception occurs.  Those statements are implicitly followed
+	 by a GIMPLE_RESX to resume execution after the exception.  So
+	 in this case the try/catch never falls through.  */
+      data->cannot_fallthru = false;
+      lower_sequence (gimple_try_cleanup (stmt), data);
+      break;
+    }
+
+  data->cannot_fallthru = cannot_fallthru;
+  gsi_next (gsi);
 }
 
 /* Try to determine whether a TRY_CATCH expression can fall through.
@@ -805,8 +864,8 @@ lower_gimple_return (gimple_stmt_iterator *gsi, struct lower_data *data)
 
   /* Generate a goto statement and remove the return statement.  */
  found:
-  /* When not optimizing, make sure user returns are preserved.  */
-  if (!optimize && gimple_has_location (stmt))
+  /* When not optimizing CFG, make sure user returns are preserved.  */
+  if (!optimize_cfg && gimple_has_location (stmt))
     DECL_ARTIFICIAL (tmp_rs.label) = 0;
   t = gimple_build_goto (tmp_rs.label);
   gimple_set_location (t, gimple_location (stmt));

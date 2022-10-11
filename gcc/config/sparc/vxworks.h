@@ -21,8 +21,9 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_OS_CPP_BUILTINS()		\
   do						\
     {						\
-      builtin_define ("__sparc");		\
-      builtin_define ("CPU=SIMSPARCSOLARIS");	\
+      builtin_define ("sparc");			\
+      builtin_define ("__sparc__");		\
+      builtin_define ("CPU=SPARC");		\
       VXWORKS_OS_CPP_BUILTINS ();		\
     }						\
   while (0)
@@ -37,7 +38,8 @@ along with GCC; see the file COPYING3.  If not see
 #define ASM_SPEC "%{fpic|fPIC|fpie|fPIE:-K PIC} %(asm_cpu)"
 
 #undef LIB_SPEC
-#define LIB_SPEC VXWORKS_LIB_SPEC
+#define LIB_SPEC VXWORKS_LIB_SPEC \
+  "%{mrtp:%{!shared: -L%:getenv(WIND_BASE /target/usr/lib/sparc/SPARC/common)}}"
 #undef LINK_SPEC
 #define LINK_SPEC VXWORKS_LINK_SPEC
 #undef STARTFILE_SPEC
@@ -55,3 +57,11 @@ along with GCC; see the file COPYING3.  If not see
 /* We cannot use PC-relative accesses for VxWorks PIC because there is no
    fixed gap between segments.  */
 #undef ASM_PREFERRED_EH_DATA_FORMAT
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1
+
+/* This platform supports the probing method of stack checking (RTP mode)
+   and the ZCX mechanism. 8K is reserved in the stack to propagate
+   exceptions reliably in case of stack overflow. */
+#define STACK_CHECK_PROTECT 8192

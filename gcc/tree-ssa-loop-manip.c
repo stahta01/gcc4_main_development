@@ -112,6 +112,8 @@ create_iv (tree base, tree step, tree var, struct loop *loop,
     gsi_insert_seq_on_edge_immediate (pe, stmts);
 
   stmt = gimple_build_assign_with_ops (incr_op, va, vb, step);
+  if (!gsi_end_p (*incr_pos))
+    gimple_set_location (stmt, gimple_location (gsi_stmt (*incr_pos)));
   if (after)
     gsi_insert_after (incr_pos, stmt, GSI_NEW_STMT);
   else

@@ -461,7 +461,7 @@ tree_complete_unroll (void)
 static bool
 gate_tree_complete_unroll (void)
 {
-  return true;
+  return !flag_preserve_control_flow;
 }
 
 struct gimple_opt_pass pass_complete_unroll =

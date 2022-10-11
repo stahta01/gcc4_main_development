@@ -7318,7 +7318,7 @@ objc_synthesize_getter (tree klass, tree class_methods ATTRIBUTE_UNUSED, tree pr
 #ifdef OBJCPLUS
   finish_return_stmt (ret_val);
 #else
-  c_finish_return (location, ret_val, NULL_TREE);
+  c_finish_return (location, location, ret_val, NULL_TREE);
 #endif
 
   add_stmt (c_end_compound_stmt (location, body, true));

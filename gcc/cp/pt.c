@@ -13707,20 +13707,20 @@ tsubst_copy_and_build (tree t,
 	      ret = finish_call_expr (function, &call_args,
 				       /*disallow_virtual=*/false,
 				       /*koenig_p=*/false,
-				       complain);
+				       complain, input_location);
 	    else
 	      ret = (build_new_method_call
 		      (instance, fn,
 		       &call_args, NULL_TREE,
 		       qualified_p ? LOOKUP_NONVIRTUAL : LOOKUP_NORMAL,
 		       /*fn_p=*/NULL,
-		       complain));
+		       complain, input_location));
 	  }
 	else
 	  ret = finish_call_expr (function, &call_args,
 				  /*disallow_virtual=*/qualified_p,
 				  koenig_p,
-				  complain);
+				  complain, input_location);
 
 	release_tree_vector (call_args);
 

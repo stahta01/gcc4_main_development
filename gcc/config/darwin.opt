@@ -83,7 +83,7 @@ force_flat_namespace
 Driver RejectNegative Alias(Zforce_flat_namespace)
 
 framework
-Driver RejectNegative Separate
+Driver RejectNegative Joined Separate
 
 fterminated-vtables
 Driver RejectNegative

@@ -23,7 +23,7 @@ class Y // { dg-error "1:new types may not be defined in a return type" "err" }
     Y();
 }
 X::X( int xi ) // { dg-error "14:return type specification for constructor invalid" "err" }
-// { dg-message "1:X::X|candidate expects" "match candidate text" { target *-*-* } 25 }
+// { dg-message "4:X::X|candidate expects" "match candidate text" { target *-*-* } 25 }
 {
     x = xi;
 }

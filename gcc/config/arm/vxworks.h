@@ -1,6 +1,6 @@
 /* Definitions of target machine for GCC,
    for ARM with targetting the VXWorks run time environment. 
-   Copyright (C) 1999, 2000, 2003, 2004, 2007, 2008, 2009, 2010, 2011
+   Copyright (C) 1999, 2000, 2003, 2004, 2007, 2008, 2009, 2010, 2011, 2013
    Free Software Foundation, Inc.
 
    Contributed by: Mike Stump <mrs@wrs.com>
@@ -30,7 +30,14 @@ along with GCC; see the file COPYING3.  If not see
     else					\
       builtin_define ("ARMEL");			\
 						\
-    if (arm_arch_xscale)			\
+    if (arm_arch7)				\
+      {						\
+	if (thumb_code)				\
+	  builtin_define ("CPU=ARMARCH7_T2");	\
+	else					\
+	  builtin_define ("CPU=ARMARCH7");	\
+      }						\
+    else if (arm_arch_xscale)			\
       builtin_define ("CPU=XSCALE");		\
     else if (arm_arch5)				\
       builtin_define ("CPU=ARMARCH5");		\
@@ -46,6 +53,16 @@ along with GCC; see the file COPYING3.  If not see
 
 #undef SUBTARGET_OVERRIDE_OPTIONS
 #define SUBTARGET_OVERRIDE_OPTIONS VXWORKS_OVERRIDE_OPTIONS
+
+/* Refined from ../vxworks.h.  */
+#undef VXWORKS_ADDITIONAL_CPP_SPEC
+#define VXWORKS_ADDITIONAL_CPP_SPEC			\
+ "%{!nostdinc:						\
+    %{isystem*}						\
+    %{mrtp: -idirafter %:getenv(WIND_USR /h)		\
+            -idirafter %:getenv(WIND_USR /h/wrn/coreip) \
+      ;:    -idirafter %:getenv(WIND_BASE /target/h)	\
+            -idirafter %:getenv(WIND_BASE /target/h/wrn/coreip)}}"
 
 /* Subsume the arm/elf.h definition, and add RTP hooks.  */
 #undef SUBTARGET_CPP_SPEC
@@ -64,7 +81,11 @@ along with GCC; see the file COPYING3.  If not see
    t5tbe:     -mthumb -mthumb-interwork -mbig-endian -march=armv5 ;	\
    txscale:   -mlittle-endian -mcpu=xscale ;				\
    txscalebe: -mbig-endian -mcpu=xscale ;				\
-            : -march=armv4}"
+   t7:        -mlittle-endian -march=armv7-a ;				\
+   t7be:      -mbig-endian -march=armv7-a ;				\
+   t7t2:      -mthumb -mlittle-endian -march=armv7-a ;			\
+   t7t2be:    -mthumb -mbig-endian -march=armv7-a ;			\
+        :     -march=armv7-a}"
 
 /* Pass -EB for big-endian targets.  */
 #define VXWORKS_ENDIAN_SPEC \
@@ -77,13 +98,30 @@ along with GCC; see the file COPYING3.  If not see
 #define LINK_SPEC VXWORKS_LINK_SPEC " " VXWORKS_ENDIAN_SPEC
 
 #undef LIB_SPEC
-#define LIB_SPEC VXWORKS_LIB_SPEC
+#define LIB_SPEC VXWORKS_LIB_SPEC \
+ "%{mrtp:%{!shared: \
+    -L%:getenv(WIND_BASE /target/lib_smp/usr/lib/arm/ARMARCH7/common) \
+ }}"
 
 #undef STARTFILE_SPEC
 #define STARTFILE_SPEC VXWORKS_STARTFILE_SPEC
 
 #undef ENDFILE_SPEC
 #define ENDFILE_SPEC VXWORKS_ENDFILE_SPEC
+
+/* Setup to produce unwind info for DW2 eh and to
+   configure crtstuff accordingly.  */
+
+#undef  DWARF2_UNWIND_INFO
+#define DWARF2_UNWIND_INFO 1
+
+#define HAS_INIT_SECTION
+#undef  INIT_SECTION_ASM_OP
+#undef  FINI_SECTION_ASM_OP
+
+#define USE_EH_FRAME_REGISTRY
+#define USE_TM_CLONE_REGISTRY 0
+#define TARGET_USE_JCR_SECTION 0
 
 /* There is no default multilib.  */
 #undef MULTILIB_DEFAULTS
@@ -108,3 +146,17 @@ along with GCC; see the file COPYING3.  If not see
 
 #undef TARGET_DEFAULT_WORD_RELOCATIONS
 #define TARGET_DEFAULT_WORD_RELOCATIONS 1
+
+/* Clear the instruction cache from `beg' to `end'.  This is
+   implemented in lib1funcs.S, so ensure an error if this definition
+   is used.  */
+#undef  CLEAR_INSN_CACHE
+#define CLEAR_INSN_CACHE(BEG, END) not_used
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1
+
+/* This platform supports the probing method of stack checking (RTP mode)
+   and the ZCX mechanism. 8K is reserved in the stack to propagate
+   exceptions reliably in case of stack overflow. */
+#define STACK_CHECK_PROTECT 8192

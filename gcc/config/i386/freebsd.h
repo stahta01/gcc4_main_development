@@ -5,6 +5,7 @@
    Modified for stabs-in-ELF by H.J. Lu.
    Adapted from GNU/Linux version by John Polstra.
    Continued development by David O'Brien <obrien@freebsd.org>
+   Copyright (C) 2010, 2011 John Marino <www.dragonlace.net>
 
 This file is part of GCC.
 
@@ -127,10 +128,10 @@ along with GCC; see the file COPYING3.  If not see
 #undef  DEFAULT_PCC_STRUCT_RETURN
 #define DEFAULT_PCC_STRUCT_RETURN 0
 
-/* FreeBSD sets the rounding precision of the FPU to 53 bits.  Let the
-   compiler get the contents of <float.h> and std::numeric_limits correct.  */
+/* FreeBSD sets the rounding precision of the FPU to 53 bits, but GNAT
+   resets it to full precision.  */
 #undef TARGET_96_ROUND_53_LONG_DOUBLE
-#define TARGET_96_ROUND_53_LONG_DOUBLE (!TARGET_64BIT)
+#define TARGET_96_ROUND_53_LONG_DOUBLE 0
 
 /* Put all *tf routines in libgcc.  */
 #undef LIBGCC2_HAS_TF_MODE
@@ -148,3 +149,4 @@ along with GCC; see the file COPYING3.  If not see
 
 #define TARGET_ASM_FILE_END file_end_indicate_exec_stack
 
+#define HAVE_ENABLE_EXECUTE_STACK

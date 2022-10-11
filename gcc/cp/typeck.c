@@ -6495,7 +6495,12 @@ build_const_cast (tree type, tree expr, tsubst_flags_t complain)
 tree
 build_c_cast (location_t loc ATTRIBUTE_UNUSED, tree type, tree expr)
 {
-  return cp_build_c_cast (type, expr, tf_warning_or_error);
+  tree result = cp_build_c_cast (type, expr, tf_warning_or_error);
+
+  if (EXPR_P (result))
+    SET_EXPR_LOCATION2 (result, loc);
+
+  return result;
 }
 
 /* Build an expression representing an explicit C-style cast to type

@@ -709,6 +709,10 @@ faccess-control
 C++ ObjC++ Var(flag_access_control) Init(1)
 Enforce class member access control semantics
 
+fada-spec-parent=
+C ObjC C++ ObjC++ RejectNegative Joined Var(ada_specs_parent)
+-fada-spec-parent=unit  Dump Ada specs as child units of given parent
+
 fall-virtual
 C++ ObjC++ Ignore Warn(switch %qs is no longer supported)
 
@@ -1159,6 +1163,10 @@ C ObjC C++ ObjC++ Joined Separate
 
 lang-asm
 C Undocumented RejectDriver
+
+lang-idl
+C C++
+Input is OMG IDL, to be preprocessed only (-E mandatory)
 
 no-integrated-cpp
 Driver

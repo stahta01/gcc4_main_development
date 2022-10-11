@@ -230,10 +230,12 @@ c_common_init_options (unsigned int decoded_options_count,
 
   if (c_language == clk_c)
     {
-      /* If preprocessing assembly language, accept any of the C-family
-	 front end options since the driver may pass them through.  */
+      /* If preprocessing assembly language, accept any of the C-family front
+	 end options since the driver may pass them through.  Similarily for
+	 OMG IDL inputs wrt C/C++ options.  */
       for (i = 1; i < decoded_options_count; i++)
-	if (decoded_options[i].opt_index == OPT_lang_asm)
+	if (decoded_options[i].opt_index == OPT_lang_asm
+	    || decoded_options[i].opt_index == OPT_lang_idl)
 	  {
 	    accept_all_c_family_options = true;
 	    break;
@@ -722,6 +724,10 @@ c_common_handle_option (size_t scode, const char *arg, int value,
     case OPT_lang_asm:
       cpp_set_lang (parse_in, CLK_ASM);
       cpp_opts->dollars_in_ident = false;
+      break;
+
+    case OPT_lang_idl:
+      cpp_set_lang (parse_in, CLK_CXX98);
       break;
 
     case OPT_nostdinc:

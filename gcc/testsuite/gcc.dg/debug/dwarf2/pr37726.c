@@ -19,7 +19,3 @@ main (void)
 {
   return foo (4) - 6;
 }
-
-/* Both parm and var variables should be in debug info for both foo and bar.  */
-/* { dg-final { scan-assembler-times "\"parm\[^\n\]*\"\[^\n\]*DW_AT_name" 2 } } */
-/* { dg-final { scan-assembler-times "\"var\[^\n\]*\"\[^\n\]*DW_AT_name" 2 } } */

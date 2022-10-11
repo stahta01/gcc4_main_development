@@ -7267,17 +7267,24 @@ function_value_64 (enum machine_mode orig_mode, enum machine_mode mode,
 }
 
 static rtx
-function_value_ms_64 (enum machine_mode orig_mode, enum machine_mode mode)
+function_value_ms_64 (enum machine_mode orig_mode, enum machine_mode mode,
+		      const_tree valtype)
 {
   unsigned int regno = AX_REG;
 
   if (TARGET_SSE)
     {
       switch (GET_MODE_SIZE (mode))
-        {
-        case 16:
-          if((SCALAR_INT_MODE_P (mode) || VECTOR_MODE_P (mode))
-	     && !COMPLEX_MODE_P (mode))
+	{
+	case 16:
+	  if (valtype != NULL_TREE
+	      && !VECTOR_INTEGER_TYPE_P (valtype)
+	      && !VECTOR_INTEGER_TYPE_P (valtype)
+	      && !INTEGRAL_TYPE_P (valtype)
+	      && !VECTOR_FLOAT_TYPE_P (valtype))
+	    break;
+	  if ((SCALAR_INT_MODE_P (mode) || VECTOR_MODE_P (mode))
+	      && !COMPLEX_MODE_P (mode))
 	    regno = FIRST_SSE_REG;
 	  break;
 	case 8:
@@ -7304,7 +7311,7 @@ ix86_function_value_1 (const_tree valtype, const_tree fntype_or_decl,
   fntype = fn ? TREE_TYPE (fn) : fntype_or_decl;
 
   if (TARGET_64BIT && ix86_function_type_abi (fntype) == MS_ABI)
-    return function_value_ms_64 (orig_mode, mode);
+    return function_value_ms_64 (orig_mode, mode, valtype);
   else if (TARGET_64BIT)
     return function_value_64 (orig_mode, mode, valtype);
   else
@@ -7336,6 +7343,18 @@ ix86_promote_function_mode (const_tree type, enum machine_mode mode,
     }
   return default_promote_function_mode (type, mode, punsignedp, fntype,
 					for_return);
+}
+
+/* Return true if a structure, union or array with MODE containing FIELD
+   should be accessed using BLKmode.  */
+
+static bool
+ix86_member_type_forces_blk (const_tree field, enum machine_mode mode)
+{
+  /* Union with XFmode must be in BLKmode.  */
+  return (mode == XFmode
+	  && (TREE_CODE (DECL_FIELD_CONTEXT (field)) == UNION_TYPE
+	      || TREE_CODE (DECL_FIELD_CONTEXT (field)) == QUAL_UNION_TYPE));
 }
 
 rtx
@@ -7404,7 +7423,9 @@ return_in_memory_ms_64 (const_tree type, enum machine_mode mode)
   HOST_WIDE_INT size = int_size_in_bytes (type);
 
   /* __m128 is returned in xmm0.  */
-  if ((SCALAR_INT_MODE_P (mode) || VECTOR_MODE_P (mode))
+  if ((!type || VECTOR_INTEGER_TYPE_P (type) || INTEGRAL_TYPE_P (type)
+       || VECTOR_FLOAT_TYPE_P (type))
+      && (SCALAR_INT_MODE_P (mode) || VECTOR_MODE_P (mode))
       && !COMPLEX_MODE_P (mode) && (GET_MODE_SIZE (mode) == 16 || size == 16))
     return false;
 
@@ -8851,9 +8872,9 @@ ix86_builtin_setjmp_frame_value (void)
 static void
 ix86_compute_frame_layout (struct ix86_frame *frame)
 {
-  unsigned int stack_alignment_needed;
+  unsigned HOST_WIDE_INT stack_alignment_needed;
   HOST_WIDE_INT offset;
-  unsigned int preferred_alignment;
+  unsigned HOST_WIDE_INT preferred_alignment;
   HOST_WIDE_INT size = get_frame_size ();
   HOST_WIDE_INT to_allocate;
 
@@ -8923,7 +8944,8 @@ ix86_compute_frame_layout (struct ix86_frame *frame)
     = (TARGET_PROLOGUE_USING_MOVE && cfun->machine->use_fast_prologue_epilogue
        /* If static stack checking is enabled and done with probes,
 	  the registers need to be saved before allocating the frame.  */
-       && flag_stack_check != STATIC_BUILTIN_STACK_CHECK);
+       && (flag_stack_check != STATIC_BUILTIN_STACK_CHECK
+	   || stack_check_symbol));
 
   /* Skip return address.  */
   offset = UNITS_PER_WORD;
@@ -9833,17 +9855,35 @@ output_adjust_stack_and_probe (rtx reg)
   return "";
 }
 
+static rtx ix86_expand_int_compare (enum rtx_code, rtx, rtx);
+
 /* Emit code to probe a range of stack addresses from FIRST to FIRST+SIZE,
    inclusive.  These are offsets from the current stack pointer.  */
 
 static void
 ix86_emit_probe_stack_range (HOST_WIDE_INT first, HOST_WIDE_INT size)
 {
+  /* See if we have a symbol to compare the lower stack address with.  If so,
+     generate a trap if that address is beyond the symbol's value.  */
+  if (stack_check_symbol)
+    {
+      struct scratch_reg sr;
+      rtx res;
+
+      get_scratch_register_on_entry (&sr);
+      emit_move_insn (sr.reg,
+		      plus_constant (stack_pointer_rtx, -(first + size)));
+      res = ix86_expand_int_compare (LTU, sr.reg,
+				     gen_rtx_MEM (Pmode, stack_check_symbol));
+      emit_insn (gen_rtx_TRAP_IF (VOIDmode, res, GEN_INT (6)));
+      release_scratch_register_on_entry (&sr);
+    }
+
   /* See if we have a constant small number of probes to generate.  If so,
      that's the easy case.  The run-time loop is made up of 7 insns in the
      generic case while the compile-time loop is made up of n insns for n #
      of intervals.  */
-  if (size <= 7 * PROBE_INTERVAL)
+  else if (size <= 7 * PROBE_INTERVAL)
     {
       HOST_WIDE_INT i;
 
@@ -9951,6 +9991,27 @@ output_probe_stack_range (rtx reg, rtx end)
   fputc ('\n', asm_out_file);
 
   ASM_OUTPUT_INTERNAL_LABEL (asm_out_file, end_lab);
+
+  return "";
+}
+
+/* Output a conditional trap.  COND is the condition code.  */
+
+const char *
+output_cond_trap (rtx cond)
+{
+  static int labelno = 0;
+  char ok_lab[32];
+
+  ASM_GENERATE_INTERNAL_LABEL (ok_lab, "LOCT", labelno++);
+
+  fputs ("\tj", asm_out_file);
+  ix86_print_operand (asm_out_file, cond, 'c');
+  fputs ("\t", asm_out_file);
+  assemble_name_raw (asm_out_file, ok_lab);
+  fputs ("\n" ASM_SHORT "0x0b0f\n", asm_out_file);
+
+  ASM_OUTPUT_INTERNAL_LABEL (asm_out_file, ok_lab);
 
   return "";
 }
@@ -10342,8 +10403,12 @@ ix86_expand_prologue (void)
 
       if (STACK_CHECK_MOVING_SP)
 	{
-	  ix86_adjust_stack_and_probe (allocate);
-	  allocate = 0;
+	  if (!(current_function_is_leaf && !cfun->calls_alloca
+		&& allocate <= PROBE_INTERVAL))
+	    {
+	      ix86_adjust_stack_and_probe (allocate);
+	      allocate = 0;
+	    }
 	}
       else
 	{
@@ -10353,9 +10418,26 @@ ix86_expand_prologue (void)
 	    size = 0x80000000 - STACK_CHECK_PROTECT - 1;
 
 	  if (TARGET_STACK_PROBE)
-	    ix86_emit_probe_stack_range (0, size + STACK_CHECK_PROTECT);
+	    {
+	      if (current_function_is_leaf && !cfun->calls_alloca)
+		{
+		  if (size > PROBE_INTERVAL)
+		    ix86_emit_probe_stack_range (0, size);
+		}
+	      else
+		ix86_emit_probe_stack_range (0, size + STACK_CHECK_PROTECT);
+	    }
 	  else
-	    ix86_emit_probe_stack_range (STACK_CHECK_PROTECT, size);
+	    {
+	      if (current_function_is_leaf && !cfun->calls_alloca)
+		{
+		  if (size > PROBE_INTERVAL && size > STACK_CHECK_PROTECT)
+		    ix86_emit_probe_stack_range (STACK_CHECK_PROTECT,
+						 size - STACK_CHECK_PROTECT);
+		}
+	      else
+		ix86_emit_probe_stack_range (STACK_CHECK_PROTECT, size);
+	    }
 	}
     }
 
@@ -25942,6 +26024,9 @@ enum ix86_builtins
   /* CFString built-in for darwin */
   IX86_BUILTIN_CFSTRING,
 
+  /* Establisher frame for Windows x64.  */
+  IX86_BUILTIN_ESTABLISHER_FRAME,
+
   IX86_BUILTIN_MAX
 };
 
@@ -27860,6 +27945,10 @@ ix86_init_builtins (void)
   if (TARGET_LP64)
     ix86_init_builtins_va_builtins_abi ();
 
+  if (TARGET_SEH)
+    def_builtin (OPTION_MASK_ISA_64BIT, "__builtin_establisher_frame",
+		 PVOID_FTYPE_VOID, IX86_BUILTIN_ESTABLISHER_FRAME);
+
 #ifdef SUBTARGET_INIT_BUILTINS
   SUBTARGET_INIT_BUILTINS;
 #endif
@@ -29602,6 +29691,16 @@ ix86_expand_builtin (tree exp, rtx target, rtx subtarget ATTRIBUTE_UNUSED,
 	  target = gen_reg_rtx (mode);
 
 	emit_move_insn (target, tmp);
+	return target;
+      }
+
+    case IX86_BUILTIN_ESTABLISHER_FRAME:
+      {
+	if (target == NULL_RTX
+	    || GET_MODE (target) != Pmode)
+	  target = gen_reg_rtx (Pmode);
+
+	emit_insn (gen_establisher_frame (target));
 	return target;
       }
 
@@ -32694,10 +32793,40 @@ ix86_avoid_jump_mispredicts (void)
 	{
 	  int padsize = 15 - nbytes + min_insn_size (insn);
 
+          /* If the insn before which we need the p2align is immediately
+             preceded by labels, arrange to emit the p2align ahead of the
+             labels so those jumping there won't get the extra nops on the
+             way.
+
+             This is also useful debug-line-info-wise, as the nops emitted by
+             .p2align typically get the sloc of the last real insn before it,
+             even if a dedicated .loc gets emitted ahead. A p2align right
+             after a label is then problematic when control-flow preservation
+             is requested, as the slocs assigned to instructions at branch
+             destinations need to be preserved as well.  */
+
+          /* Seek the earliest label up on the way to the previous active
+             insn.  Account for deleted labels as well, for output consistency
+             as they are also emitted eventually.  */
+
+          rtx insn_to_pad = insn;
+          rtx pre_insn = PREV_INSN (insn_to_pad);
+
+          while (pre_insn && !active_insn_p (pre_insn))
+            {
+              if (LABEL_P (pre_insn)
+                  || (NOTE_P (pre_insn)
+                      && NOTE_KIND (pre_insn) == NOTE_INSN_DELETED_LABEL))
+                insn_to_pad = pre_insn;
+
+              pre_insn = PREV_INSN (pre_insn);
+            } 
+
 	  if (dump_file)
 	    fprintf (dump_file, "Padding insn %i by %i bytes!\n",
 		     INSN_UID (insn), padsize);
-          emit_insn_before (gen_pad (GEN_INT (padsize)), insn);
+
+          emit_insn_before (gen_pad (GEN_INT (padsize)), insn_to_pad);
 	}
     }
 }
@@ -32893,6 +33022,17 @@ ix86_reorg (void)
       if (TARGET_FOUR_JUMP_LIMIT)
 	ix86_avoid_jump_mispredicts ();
 #endif
+    }
+
+  /* Apple unwinder cannot handle an exception on the first instruction
+     due to a bug.  Prepend a nop.  */
+  if (TARGET_MACHO && cfun->can_throw_non_call_exceptions)
+    {
+      rtx insn = get_insns ();
+
+      insn = next_real_insn (insn);
+      if (insn != NULL_RTX && may_trap_p (PATTERN (insn)))
+	emit_insn_before (gen_nop (), insn);
     }
 }
 
@@ -34886,6 +35026,43 @@ void ix86_emit_swsqrtsf (rtx res, rtx a, enum machine_mode mode,
   /* ret = e2 * e3 */
   emit_insn (gen_rtx_SET (VOIDmode, res,
 			  gen_rtx_MULT (mode, e2, e3)));
+}
+
+/* Output assembly code to get the establisher frame (Windows x64 only).
+   This corresponds to what will be computed by Windows from Frame Register
+   and Frame Register Offset fields of the UNWIND_INFO structure.  Since
+   these values are computed very late (by ix86_expand_prologue), we cannot
+   express this using only RTL.  */
+
+const char *
+ix86_output_establisher_frame (rtx target)
+{
+  if (!frame_pointer_needed)
+    {
+      /* Note that we have advertized an lea operation.  */
+      output_asm_insn ("lea{q}\t{0(%%rsp), %0|%0, 0[rsp]}", &target);
+    }
+  else
+    {
+      rtx xops[3];
+      struct ix86_frame frame;
+
+      /* Recompute the frame layout here.  */
+      ix86_compute_frame_layout (&frame);
+
+      /* Closely follow how the frame pointer is set in
+	 ix86_expand_prologue.  */
+      xops[0] = target;
+      xops[1] = hard_frame_pointer_rtx;
+      if (frame.hard_frame_pointer_offset == frame.reg_save_offset)
+	xops[2] = GEN_INT (0);
+      else
+	xops[2] = GEN_INT (-(frame.stack_pointer_offset
+			     - frame.hard_frame_pointer_offset));
+      output_asm_insn ("lea{q}\t{%a2(%1), %0|%0, %a2[%1]}", xops);
+    }
+
+  return "";
 }
 
 #ifdef TARGET_SOLARIS
@@ -39048,6 +39225,9 @@ ix86_autovectorize_vector_sizes (void)
 
 #undef TARGET_INSTANTIATE_DECLS
 #define TARGET_INSTANTIATE_DECLS ix86_instantiate_decls
+
+#undef TARGET_MEMBER_TYPE_FORCES_BLK
+#define TARGET_MEMBER_TYPE_FORCES_BLK ix86_member_type_forces_blk
 
 #undef TARGET_SECONDARY_RELOAD
 #define TARGET_SECONDARY_RELOAD ix86_secondary_reload

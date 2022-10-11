@@ -67,7 +67,7 @@ static rtx simplify_binary_operation_1 (enum rtx_code, enum machine_mode,
 static rtx
 neg_const_int (enum machine_mode mode, const_rtx i)
 {
-  return gen_int_mode (- INTVAL (i), mode);
+  return gen_int_mode (-(unsigned HOST_WIDE_INT) INTVAL (i), mode);
 }
 
 /* Test whether expression, X, is an immediate constant that represents
@@ -294,10 +294,11 @@ delegitimize_mem_from_attrs (rtx x)
 	  {
 	    HOST_WIDE_INT bitsize, bitpos;
 	    tree toffset;
-	    int unsignedp = 0, volatilep = 0;
+	    int unsignedp, reversep, volatilep = 0;
 
-	    decl = get_inner_reference (decl, &bitsize, &bitpos, &toffset,
-					&mode, &unsignedp, &volatilep, false);
+	    decl
+	      = get_inner_reference (decl, &bitsize, &bitpos, &toffset, &mode,
+				     &unsignedp, &reversep, &volatilep, false);
 	    if (bitsize != GET_MODE_BITSIZE (mode)
 		|| (bitpos % BITS_PER_UNIT)
 		|| (toffset && !host_integerp (toffset, 0)))
@@ -646,7 +647,6 @@ simplify_unary_operation_1 (enum rtx_code code, enum machine_mode mode, rtx op)
       /* (not (ashiftrt foo C)) where C is the number of bits in FOO
 	 minus 1 is (ge foo (const_int 0)) if STORE_FLAG_VALUE is -1,
 	 so we can perform the above simplification.  */
-
       if (STORE_FLAG_VALUE == -1
 	  && GET_CODE (op) == ASHIFTRT
 	  && GET_CODE (XEXP (op, 1))
@@ -676,7 +676,6 @@ simplify_unary_operation_1 (enum rtx_code code, enum machine_mode mode, rtx op)
 	 with negating logical insns (and-not, nand, etc.).  If result has
 	 only one NOT, put it first, since that is how the patterns are
 	 coded.  */
-
       if (GET_CODE (op) == IOR || GET_CODE (op) == AND)
 	{
 	  rtx in1 = XEXP (op, 0), in2 = XEXP (op, 1);
@@ -698,6 +697,13 @@ simplify_unary_operation_1 (enum rtx_code code, enum machine_mode mode, rtx op)
 
 	  return gen_rtx_fmt_ee (GET_CODE (op) == IOR ? AND : IOR,
 				 mode, in1, in2);
+	}
+
+      /* (not (bswap x)) -> (bswap (not x)).  */
+      if (GET_CODE (op) == BSWAP)
+	{
+	  rtx x = simplify_gen_unary (NOT, mode, XEXP (op, 0), mode);
+	  return simplify_gen_unary (BSWAP, mode, x, mode);
 	}
       break;
 
@@ -1820,6 +1826,35 @@ simplify_const_unary_operation (enum rtx_code code, enum machine_mode mode,
   return NULL_RTX;
 }
 
+/* Subroutine of simplify_binary_operation to simplify a binary operation
+   CODE that can commute with byte swapping, with result mode MODE and
+   operating on OP0 and OP1.  CODE is currently one of AND, IOR or XOR.
+   Return zero if no simplification or canonicalization is possible.  */
+
+static rtx
+simplify_byte_swapping_operation (enum rtx_code code, enum machine_mode mode,
+				  rtx op0, rtx op1)
+{
+  rtx tem;
+
+  /* (op (bswap x) C1)) -> (bswap (op x C2)) with C2 swapped.  */
+  if (GET_CODE (op0) == BSWAP && CONST_SCALAR_INT_P (op1))
+    {
+      tem = simplify_gen_binary (code, mode, XEXP (op0, 0),
+				 simplify_gen_unary (BSWAP, mode, op1, mode));
+      return simplify_gen_unary (BSWAP, mode, tem, mode);
+    }
+
+  /* (op (bswap x) (bswap y)) -> (bswap (op x y)).  */
+  if (GET_CODE (op0) == BSWAP && GET_CODE (op1) == BSWAP)
+    {
+      tem = simplify_gen_binary (code, mode, XEXP (op0, 0), XEXP (op1, 0));
+      return simplify_gen_unary (BSWAP, mode, tem, mode);
+    }
+
+  return NULL_RTX;
+}
+
 /* Subroutine of simplify_binary_operation to simplify a commutative,
    associative binary operation CODE with result mode MODE, operating
    on OP0 and OP1.  CODE is currently one of PLUS, MULT, AND, IOR, XOR,
@@ -2565,6 +2600,10 @@ simplify_binary_operation_1 (enum rtx_code code, enum machine_mode mode,
 					XEXP (op0, 1));
         }
 
+      tem = simplify_byte_swapping_operation (code, mode, op0, op1);
+      if (tem)
+	return tem;
+
       tem = simplify_associative_operation (code, mode, op0, op1);
       if (tem)
 	return tem;
@@ -2710,6 +2749,10 @@ simplify_binary_operation_1 (enum rtx_code code, enum machine_mode mode,
 	  && COMPARISON_P (op0)
 	  && (reversed = reversed_comparison (op0, mode)))
 	return reversed;
+
+      tem = simplify_byte_swapping_operation (code, mode, op0, op1);
+      if (tem)
+	return tem;
 
       tem = simplify_associative_operation (code, mode, op0, op1);
       if (tem)
@@ -2892,6 +2935,10 @@ simplify_binary_operation_1 (enum rtx_code code, enum machine_mode mode,
 	  && GET_CODE (XEXP (op0, 0)) == NOT
 	  && op1 == XEXP (XEXP (op0, 0), 0))
 	return simplify_gen_binary (AND, mode, op1, XEXP (op0, 1));
+
+      tem = simplify_byte_swapping_operation (code, mode, op0, op1);
+      if (tem)
+	return tem;
 
       tem = simplify_associative_operation (code, mode, op0, op1);
       if (tem)
@@ -4440,6 +4487,21 @@ simplify_relational_operation_1 (enum rtx_code code, enum machine_mode mode,
 	break;
       }
 
+  /* (eq/ne (bswap x) C1) simplifies to (eq/ne x C2) with C2 swapped.  */
+  if ((code == EQ || code == NE)
+      && GET_CODE (op0) == BSWAP
+      && CONST_SCALAR_INT_P (op1))
+    return simplify_gen_relational (code, mode, cmp_mode, XEXP (op0, 0),
+				    simplify_gen_unary (BSWAP, cmp_mode,
+							op1, cmp_mode));
+
+  /* (eq/ne (bswap x) (bswap y)) simplifies to (eq/ne x y).  */
+  if ((code == EQ || code == NE)
+      && GET_CODE (op0) == BSWAP
+      && GET_CODE (op1) == BSWAP)
+    return simplify_gen_relational (code, mode, cmp_mode,
+				    XEXP (op0, 0), XEXP (op1, 0));
+
   return NULL_RTX;
 }
 
@@ -5575,17 +5637,17 @@ simplify_subreg (enum machine_mode outermode, rtx op,
     }
 
   /* If we have a SUBREG of a register that we are replacing and we are
-     replacing it with a MEM, make a new MEM and try replacing the
-     SUBREG with it.  Don't do this if the MEM has a mode-dependent address
-     or if we would be widening it.  */
+     replacing it with a MEM, make a new MEM and try replacing the SUBREG with
+     it.  Don't do this if changing the MEM access mode might be invalid or if
+     we would be widening it.  */
 
   if (MEM_P (op)
-      && ! mode_dependent_address_p (XEXP (op, 0))
+      && GET_MODE_SIZE (outermode) <= GET_MODE_SIZE (GET_MODE (op))
+      && valid_access_mode_change_p (XEXP (op, 0), GET_MODE (op), outermode)
       /* Allow splitting of volatile memory references in case we don't
          have instruction to move the whole thing.  */
       && (! MEM_VOLATILE_P (op)
-	  || ! have_insn_for (SET, innermode))
-      && GET_MODE_SIZE (outermode) <= GET_MODE_SIZE (GET_MODE (op)))
+	  || ! have_insn_for (SET, innermode)))
     return adjust_address_nv (op, outermode, byte);
 
   /* Handle complex values represented as CONCAT
@@ -5725,9 +5787,9 @@ simplify_subreg (enum machine_mode outermode, rtx op,
 				   : byte + shifted_bytes));
     }
 
-  /* If we have a lowpart SUBREG of a right shift of MEM, make a new MEM
-     and try replacing the SUBREG and shift with it.  Don't do this if
-     the MEM has a mode-dependent address or if we would be widening it.  */
+  /* If we have a lowpart SUBREG of a right shift of MEM, make a new MEM and
+     try replacing the SUBREG and shift with it.  Don't do this if changing
+     the MEM access mode might be invalid or if we would be widening it.  */
 
   if ((GET_CODE (op) == LSHIFTRT
        || GET_CODE (op) == ASHIFTRT)
@@ -5738,7 +5800,9 @@ simplify_subreg (enum machine_mode outermode, rtx op,
       && (INTVAL (XEXP (op, 1)) % GET_MODE_BITSIZE (outermode)) == 0
       && INTVAL (XEXP (op, 1)) > 0
       && INTVAL (XEXP (op, 1)) < GET_MODE_BITSIZE (innermode)
-      && ! mode_dependent_address_p (XEXP (XEXP (op, 0), 0))
+      && valid_access_mode_change_p (XEXP (XEXP (op, 0), 0),
+                                     GET_MODE (XEXP (op, 0)),
+                                     outermode)
       && ! MEM_VOLATILE_P (XEXP (op, 0))
       && byte == subreg_lowpart_offset (outermode, innermode)
       && (GET_MODE_SIZE (outermode) >= UNITS_PER_WORD

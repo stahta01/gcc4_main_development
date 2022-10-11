@@ -1159,6 +1159,33 @@ contains_view_convert_expr_p (const_tree ref)
   return false;
 }
 
+/* Return true if REF is a storage order barrier, i.e. a VIEW_CONVERT_EXPR
+   that can modify the storage order of objects.  Note that, even if the
+   TYPE_REVERSE_STORAGE_ORDER flag is set on both the inner type and the
+   outer type, a VIEW_CONVERT_EXPR can modify the storage order because
+   it can change the partition of the aggregate object into scalars.  */
+
+static inline bool
+storage_order_barrier_p (const_tree ref)
+{
+  tree op;
+
+  if (TREE_CODE (ref) != VIEW_CONVERT_EXPR)
+    return false;
+
+  if (AGGREGATE_TYPE_P (TREE_TYPE (ref))
+      && TYPE_REVERSE_STORAGE_ORDER (TREE_TYPE (ref)))
+    return true;
+
+  op = TREE_OPERAND (ref, 0);
+
+  if (AGGREGATE_TYPE_P (TREE_TYPE (op))
+      && TYPE_REVERSE_STORAGE_ORDER (TREE_TYPE (op)))
+    return true;
+
+  return false;
+}
+
 /* Return true, if the two ranges [POS1, SIZE1] and [POS2, SIZE2]
    overlap.  SIZE1 and/or SIZE2 can be (unsigned)-1 in which case the
    range is open-ended.  Otherwise return false.  */

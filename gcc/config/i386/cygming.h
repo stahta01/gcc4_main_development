@@ -48,6 +48,10 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_ASM_UNWIND_EMIT_BEFORE_INSN  false
 #undef  TARGET_ASM_FUNCTION_END_PROLOGUE
 #define TARGET_ASM_FUNCTION_END_PROLOGUE  i386_pe_seh_end_prologue
+#undef  TARGET_ASM_EMIT_EXCEPT_PERSONALITY
+#define TARGET_ASM_EMIT_EXCEPT_PERSONALITY i386_pe_seh_emit_except_personality
+#undef  TARGET_ASM_INIT_SECTIONS
+#define TARGET_ASM_INIT_SECTIONS  i386_pe_seh_init_sections
 #define SUBTARGET_ASM_UNWIND_INIT  i386_pe_seh_init
 
 #undef DEFAULT_ABI
@@ -467,5 +471,11 @@ do {						\
 #undef TARGET_ASM_ASSEMBLE_VISIBILITY
 #define TARGET_ASM_ASSEMBLE_VISIBILITY i386_pe_assemble_visibility
 
+/* On every windows environment we have seen ...  */
+#define MALLOC_OBSERVABLE_ALIGNMENT (2 * BITS_PER_WORD)
+
 /* Static stack checking is supported by means of probes.  */
 #define STACK_CHECK_STATIC_BUILTIN 1
+
+/* Support frame-pointer based unwinding.  */
+#define USE_IX86_FRAME_POINTER 1

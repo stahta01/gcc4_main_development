@@ -53,8 +53,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "splay-tree.h"
 #include "langhooks.h"
 #include "c-family/c-ada-spec.h"
+#include "c-family/c-xref.h"
 
 extern cpp_reader *parse_in;
+extern int cpp_check (tree, cpp_operation);
 
 /* This structure contains information about the initializations
    and/or destructions required for a particular priority level.  */
@@ -3534,7 +3536,7 @@ build_java_method_aliases (struct pointer_set_t *candidates)
 
 /* Return C++ property of T, based on given operation OP.  */
 
-static int
+int
 cpp_check (tree t, cpp_operation op)
 {
   switch (op)
@@ -3549,8 +3551,42 @@ cpp_check (tree t, cpp_operation op)
 	return DECL_COPY_CONSTRUCTOR_P (t);
       case IS_TEMPLATE:
 	return TREE_CODE (t) == TEMPLATE_DECL;
+      case IS_TEMPLATE_PARM_INDEX:
+	return TREE_CODE (t) == TEMPLATE_PARM_INDEX;
+      case GET_TEMPLATE_PARM_DECL:
+	{
+	  tree *tmp = (tree *)t;
+	  tmp[1] = TEMPLATE_PARM_DECL (tmp[0]);
+	  return 1;
+	}
+      case GET_DECL_TEMPLATE:
+	{
+	  tree *tmp = (tree *)t;
+
+	  if (TREE_CODE (tmp[0]) == FUNCTION_DECL
+	      && DECL_TEMPLATE_INFO (tmp[0]))
+	    {
+	      tmp[1] = STRIP_TEMPLATE (TREE_TYPE (DECL_TEMPLATE_INFO (tmp[0])));
+	      return 1;
+	    }
+	  else if (CLASS_TYPE_P (TREE_TYPE (tmp[0]))
+		   && CLASSTYPE_TEMPLATE_INFO (TREE_TYPE (tmp[0])))
+	    {
+	      tmp[1] =
+		STRIP_TEMPLATE (TREE_TYPE
+		  (CLASSTYPE_TEMPLATE_INFO (TREE_TYPE (tmp[0]))));
+	      return 1;
+	    }
+	  else
+	    {
+	      tmp[1] = tmp[0];
+	      return 0;
+	    }
+	}
+      case MAYBE_CLASS:
+	return MAYBE_CLASS_TYPE_P (t);
       default:
-        return 0;
+	return 0;
     }
 }
 
@@ -3593,6 +3629,25 @@ collect_ada_namespace (tree namespc, const char *source_file)
 
   /* Collect children, if any */
   collect_ada_namespace (NAMESPACE_LEVEL (namespc)->namespaces, source_file);
+}
+
+/* Dump all namespaces recursively and generate xrefs, starting from
+   NAMESPC.  */
+
+static void
+dump_xrefs (tree namespc)
+{
+  if (!namespc)
+    return;
+
+  /* Generate xref for namespc */
+  traverse_tree_xref_cpp (NAMESPACE_LEVEL (namespc)->names, cpp_check, true);
+
+  /* Dump siblings, if any */
+  dump_xrefs (TREE_CHAIN (namespc));
+
+  /* Dump children, if any */
+  dump_xrefs (NAMESPACE_LEVEL (namespc)->namespaces);
 }
 
 /* Returns true iff there is a definition available for variable or
@@ -3731,6 +3786,19 @@ cp_write_global_declarations (void)
 
       dump_ada_specs (collect_all_refs, cpp_check);
     }
+
+  /* Handle -fdump-xref */
+  if (flag_dump_xref)
+    {
+      /* Functions have been dumped by c_genericize */
+      dump_xrefs (global_namespace);
+
+      /* Output references for main file */
+      output_references (main_input_filename, true);
+    }
+
+  if (flag_syntax_only)
+    return;
 
   /* FIXME - huh?  was  input_line -= 1;*/
 

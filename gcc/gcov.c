@@ -473,7 +473,7 @@ print_usage (int error_p)
   fnotice (file, "  -p, --preserve-paths            Preserve all pathname components\n");
   fnotice (file, "  -u, --unconditional-branches    Show unconditional branch counts too\n");
   fnotice (file, "  -d, --display-progress          Display progress information\n");
-  fnotice (file, "\nFor bug reporting instructions, please see:\n%s.\n",
+  fnotice (file, "\nFor bug reporting instructions, please contact:\n%s.\n",
 	   bug_report_url);
   exit (status);
 }

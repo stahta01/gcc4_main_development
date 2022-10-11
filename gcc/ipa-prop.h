@@ -417,6 +417,10 @@ struct ipa_parm_adjustment
      don't leave behinfd any non default def ssa names belonging to them.  */
   unsigned remove_param : 1;
 
+  /* Storage order of the original parameter (for the cases when the new
+     parameter is a component of an original one).  */
+  unsigned reverse : 1;
+
   /* The parameter is to be passed by reference.  */
   unsigned by_ref : 1;
 };
@@ -445,7 +449,7 @@ tree ipa_value_from_jfunc (struct ipa_node_params *info,
 
 
 /* From tree-sra.c:  */
-tree build_ref_for_offset (location_t, tree, HOST_WIDE_INT, tree,
+tree build_ref_for_offset (location_t, tree, HOST_WIDE_INT, bool, tree,
 			   gimple_stmt_iterator *, bool);
 
 #endif /* IPA_PROP_H */

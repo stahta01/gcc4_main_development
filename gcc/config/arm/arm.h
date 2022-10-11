@@ -819,13 +819,13 @@ extern int arm_arch_thumb_hwdiv;
 
 #ifndef ARM_TARGET2_DWARF_FORMAT
 #define ARM_TARGET2_DWARF_FORMAT DW_EH_PE_pcrel
+#endif
 
 /* ttype entries (the only interesting data references used)
    use TARGET2 relocations.  */
 #define ASM_PREFERRED_EH_DATA_FORMAT(code, data) \
   (((code) == 0 && (data) == 1 && ARM_UNWIND_INFO) ? ARM_TARGET2_DWARF_FORMAT \
 			       : DW_EH_PE_absptr)
-#endif
 
 /* The native (Norcroft) Pascal compiler for the ARM passes the static chain
    as an invisible last argument (possible since varargs don't exist in
@@ -2171,6 +2171,9 @@ extern int making_const_table;
 #ifndef NEED_INDICATE_EXEC_STACK
 #define NEED_INDICATE_EXEC_STACK	0
 #endif
+
+/* Generate runtime descriptors instead of trampolines when possible.  */
+#define USE_RUNTIME_DESCRIPTORS 1
 
 /* The maximum number of parallel loads or stores we support in an ldm/stm
    instruction.  */

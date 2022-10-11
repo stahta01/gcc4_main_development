@@ -4870,7 +4870,7 @@ extern tree build_operator_new_call		(tree, VEC(tree,gc) **, tree *,
 						 tree *, tree *);
 extern tree build_new_method_call		(tree, tree, VEC(tree,gc) **,
 						 tree, int, tree *,
-						 tsubst_flags_t);
+						 tsubst_flags_t, location_t);
 extern tree build_special_member_call		(tree, tree, VEC(tree,gc) **,
 						 tree, int, tsubst_flags_t);
 extern tree build_new_op			(enum tree_code, int, tree, 
@@ -5556,7 +5556,8 @@ bool empty_expr_stmt_p				(tree);
 extern tree perform_koenig_lookup		(tree, VEC(tree,gc) *, bool,
 						 tsubst_flags_t);
 extern tree finish_call_expr			(tree, VEC(tree,gc) **, bool,
-						 bool, tsubst_flags_t);
+						 bool, tsubst_flags_t,
+						 location_t);
 extern tree finish_increment_expr		(tree, enum tree_code);
 extern tree finish_this_expr			(void);
 extern tree finish_pseudo_destructor_expr       (tree, tree, tree);

@@ -489,6 +489,14 @@ flow_loops_find (struct loops *loops)
 		      break;
 		    }
 		  loop->latch = latch;
+		  if (e->flags & EDGE_LOOP_NO_UNROLL)
+		    loop->hint_no_unroll = 1;
+		  if (e->flags & EDGE_LOOP_UNROLL)
+		    loop->hint_unroll = 1;
+		  if (e->flags & EDGE_LOOP_NO_VECTOR)
+		    loop->hint_no_vector = 1;
+		  if (e->flags & EDGE_LOOP_VECTOR)
+		    loop->hint_vector = 1;
 		}
 	    }
 	}

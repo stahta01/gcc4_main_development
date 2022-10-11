@@ -104,6 +104,11 @@ enum gf_mask {
     GF_CALL_NOTHROW		= 1 << 4,
     GF_CALL_ALLOCA_FOR_VAR	= 1 << 5,
     GF_CALL_INTERNAL		= 1 << 6,
+    GF_CALL_BY_DESCRIPTOR	= 1 << 7,
+    GF_GOTO_LOOP_NO_UNROLL	= 1 << 0,
+    GF_GOTO_LOOP_UNROLL		= 1 << 1,
+    GF_GOTO_LOOP_NO_VECTOR	= 1 << 2,
+    GF_GOTO_LOOP_VECTOR		= 1 << 3,
     GF_OMP_PARALLEL_COMBINED	= 1 << 0,
 
     /* True on an GIMPLE_OMP_RETURN statement if the return does not require
@@ -1004,7 +1009,6 @@ extern bool is_gimple_condexpr (tree);
 /* Returns true iff T is a valid call address expression.  */
 extern bool is_gimple_call_addr (tree);
 
-extern void recalculate_side_effects (tree);
 extern bool gimple_compare_field_offset (tree, tree);
 extern tree gimple_register_type (tree);
 extern tree gimple_register_canonical_type (tree);
@@ -2499,6 +2503,28 @@ gimple_call_alloca_for_var_p (gimple s)
   return (s->gsbase.subcode & GF_CALL_ALLOCA_FOR_VAR) != 0;
 }
 
+/* If BY_DESCRIPTOR_P is true, GIMPLE_CALL S is an indirect call for which
+   pointers to nested function are descriptors instead of trampolines.  */
+
+static inline void
+gimple_call_set_by_descriptor (gimple s, bool by_descriptor_p)
+{
+  GIMPLE_CHECK (s, GIMPLE_CALL);
+  if (by_descriptor_p)
+    s->gsbase.subcode |= GF_CALL_BY_DESCRIPTOR;
+  else
+    s->gsbase.subcode &= ~GF_CALL_BY_DESCRIPTOR;
+}
+
+/* Return true if S is a by-descriptor call.  */
+
+static inline bool
+gimple_call_by_descriptor_p (gimple s)
+{
+  GIMPLE_CHECK (s, GIMPLE_CALL);
+  return (gimple_call_flags (s) & ECF_BY_DESCRIPTOR) != 0;
+}
+
 /* Copy all the GF_CALL_* flags from ORIG_CALL to DEST_CALL.  */
 
 static inline void
@@ -2805,6 +2831,106 @@ gimple_goto_set_dest (gimple gs, tree dest)
 {
   GIMPLE_CHECK (gs, GIMPLE_GOTO);
   gimple_set_op (gs, 0, dest);
+}
+
+
+/* Return true if GIMPLE_CALL S is marked with the no-unroll loop 
+   optimization  hint.  */
+
+static inline bool
+gimple_goto_loop_no_unroll_p (gimple s)
+{
+  GIMPLE_CHECK (s, GIMPLE_GOTO);
+  return (s->gsbase.subcode & GF_GOTO_LOOP_NO_UNROLL) != 0;
+}
+
+
+/* If NO_UNROLL_P is true, mark goto statement S with the no-unroll loop 
+   optimization  hint.  */
+
+static inline void
+gimple_goto_set_loop_no_unroll (gimple s, bool no_unroll_p)
+{
+  GIMPLE_CHECK (s, GIMPLE_GOTO);
+  if (no_unroll_p)
+    s->gsbase.subcode |= GF_GOTO_LOOP_NO_UNROLL;
+  else
+    s->gsbase.subcode &= ~GF_GOTO_LOOP_NO_UNROLL;
+}
+
+
+/* Return true if GIMPLE_CALL S is marked with the unroll loop 
+   optimization  hint.  */
+
+static inline bool
+gimple_goto_loop_unroll_p (gimple s)
+{
+  GIMPLE_CHECK (s, GIMPLE_GOTO);
+  return (s->gsbase.subcode & GF_GOTO_LOOP_UNROLL) != 0;
+}
+
+
+/* If UNROLL_P is true, mark goto statement S with the unroll loop 
+   optimization  hint.  */
+
+static inline void
+gimple_goto_set_loop_unroll (gimple s, bool unroll_p)
+{
+  GIMPLE_CHECK (s, GIMPLE_GOTO);
+  if (unroll_p)
+    s->gsbase.subcode |= GF_GOTO_LOOP_UNROLL;
+  else
+    s->gsbase.subcode &= ~GF_GOTO_LOOP_UNROLL;
+}
+
+
+/* Return true if GIMPLE_CALL S is marked with the no-vector loop 
+   optimization  hint.  */
+
+static inline bool
+gimple_goto_loop_no_vector_p (gimple s)
+{
+  GIMPLE_CHECK (s, GIMPLE_GOTO);
+  return (s->gsbase.subcode & GF_GOTO_LOOP_NO_VECTOR) != 0;
+}
+
+
+/* If NO_VECTOR_P is true, mark goto statement S with the no-vector loop 
+   optimization  hint.  */
+
+static inline void
+gimple_goto_set_loop_no_vector (gimple s, bool no_vector_p)
+{
+  GIMPLE_CHECK (s, GIMPLE_GOTO);
+  if (no_vector_p)
+    s->gsbase.subcode |= GF_GOTO_LOOP_NO_VECTOR;
+  else
+    s->gsbase.subcode &= ~GF_GOTO_LOOP_NO_VECTOR;
+}
+
+
+/* Return true if GIMPLE_CALL S is marked with the vector loop 
+   optimization  hint.  */
+
+static inline bool
+gimple_goto_loop_vector_p (gimple s)
+{
+  GIMPLE_CHECK (s, GIMPLE_GOTO);
+  return (s->gsbase.subcode & GF_GOTO_LOOP_VECTOR) != 0;
+}
+
+
+/* If VECTOR_P is true, mark goto statement S with the vector loop 
+   optimization  hint.  */
+
+static inline void
+gimple_goto_set_loop_vector (gimple s, bool vector_p)
+{
+  GIMPLE_CHECK (s, GIMPLE_GOTO);
+  if (vector_p)
+    s->gsbase.subcode |= GF_GOTO_LOOP_VECTOR;
+  else
+    s->gsbase.subcode &= ~GF_GOTO_LOOP_VECTOR;
 }
 
 

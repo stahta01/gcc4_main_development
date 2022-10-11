@@ -34,8 +34,8 @@ extern void foo5(void) __attribute__ ((__noreturn__));
 void
 foo5(void)
 {
-  return; /* { dg-warning "'noreturn' has a 'return' statement" "detect invalid return" } */
-}         /* { dg-warning "function does return" "detect return from noreturn" { target c } 37 } */
+  return; /* { dg-warning "'noreturn'" "detect return from noreturn" } */
+}
 
 extern void foo6(void);
 void

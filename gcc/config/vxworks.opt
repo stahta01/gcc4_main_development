@@ -35,6 +35,39 @@ mrtp
 Target Report RejectNegative Mask(VXWORKS_RTP) Condition(VXWORKS_KIND == VXWORKS_KIND_NORMAL)
 Assume the VxWorks RTP environment
 
+crtbe
+Driver RejectNegative Condition(VXWORKS_KIND == VXWORKS_KIND_NORMAL)
+Add crtbegin/crtend.o to the link
+
+nocrtbe
+Driver RejectNegative Condition(VXWORKS_KIND == VXWORKS_KIND_NORMAL)
+Cancel -crtbe, always
+
+auto-register
+Driver RejectNegative Condition(VXWORKS_KIND == VXWORKS_KIND_NORMAL)
+Request special crt symbol to trigger automatic eh registration
+
+noauto-register
+Driver RejectNegative Condition(VXWORKS_KIND == VXWORKS_KIND_NORMAL)
+Cancel -auto-register, always
+
+; VxWorks variants have crt0 and various libs in well defined places
+; for each variant, in particular for RTPs. While the compiler proper
+; is identical, finding the pieces automatically at link time can be
+; achieved from simple indications on the kind of variant we target.
+
+vxsim
+Driver RejectNegative Condition(VXWORKS_KIND == VXWORKS_KIND_NORMAL)
+Indicate that we are targeting VxSim
+
+vxcert
+Driver RejectNegative Condition(VXWORKS_KIND == VXWORKS_KIND_NORMAL)
+Indicate that we are targeting VxWorks-Cert
+
+vxsmp
+Driver RejectNegative Condition(VXWORKS_KIND == VXWORKS_KIND_NORMAL)
+Indicate that we are targeting VxWorks-SMP
+
 ; VxWorks AE has two modes: kernel mode and vThreads mode.  In
 ; general, back ends do not actually need to know which mode they're
 ; in, so we do not have to set any flags.

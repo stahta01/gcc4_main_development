@@ -271,8 +271,13 @@ struct array_descr_info
   tree data_location;
   tree allocated;
   tree associated;
+
   struct array_descr_dimen
     {
+      /* GCC uses sizetype for array indices, so lower_bound and upper_bound
+	 will likely be "sizetype" values. However, bounds may have another
+	 type in the original source code.  */
+      tree bounds_type;
       tree lower_bound;
       tree upper_bound;
       tree stride;

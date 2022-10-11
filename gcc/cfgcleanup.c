@@ -108,6 +108,29 @@ update_forwarder_flag (basic_block bb)
   else
     bb->flags &= ~BB_FORWARDER_BLOCK;
 }
+
+/* BB is a forwarder block about to be bypassed.  If possible, move the
+   debug insns it may contain to its single successor.  */
+
+static void
+move_debug_insns_from_forwarder_block (basic_block bb)
+{
+  basic_block succ = single_succ (bb);
+  rtx after, insn, curr;
+
+  /* Move debug insns only if the successor has a single predecessor.  */
+  if (succ == EXIT_BLOCK_PTR || !single_pred_p (succ))
+    return;
+
+  after = BB_HEAD (succ);
+  if (LABEL_P (after))
+    after = NEXT_INSN (after);
+
+  /* Inserting at a fixed place is LIFO so we must proceed backward.  */
+  FOR_BB_INSNS_REVERSE_SAFE (bb, insn, curr)
+    if (DEBUG_INSN_P (insn))
+      reorder_insns (insn, insn, after);
+}
 
 /* Simplify a conditional jump around an unconditional jump.
    Return true if something changed.  */
@@ -151,7 +174,6 @@ try_simplify_condjump (basic_block cbranch_block)
      must be left untouched (they are required to make it safely across
      partition boundaries).  See the comments at the top of
      bb-reorder.c:partition_hot_cold_basic_blocks for complete details.  */
-
   if (BB_PARTITION (jump_block) != BB_PARTITION (jump_dest_block)
       || (cbranch_jump_edge->flags & EDGE_CROSSING))
     return false;
@@ -159,9 +181,14 @@ try_simplify_condjump (basic_block cbranch_block)
   /* The conditional branch must target the block after the
      unconditional branch.  */
   cbranch_dest_block = cbranch_jump_edge->dest;
-
   if (cbranch_dest_block == EXIT_BLOCK_PTR
       || !can_fallthru (jump_block, cbranch_dest_block))
+    return false;
+
+  /* If we aren't optimizing CFG and the single successor edge of the jump
+     block is the only place in RTL which holds some unique locus, punt.  */
+  if (!optimize_cfg
+      && unique_locus_on_edge_between_p (jump_block, jump_dest_block, true))
     return false;
 
   /* Invert the conditional branch.  */
@@ -476,9 +503,9 @@ try_forward_edges (int mode, basic_block b)
 	      new_target = single_succ (target);
 	      if (target == new_target)
 		counter = n_basic_blocks;
-	      else if (!optimize)
+	      else if (!optimize_cfg)
 		{
-		  /* When not optimizing, ensure that edges or forwarder
+		  /* When not optimizing CFG, ensure that edges or forwarder
 		     blocks with different locus are not optimized out.  */
 		  int new_locus = single_succ_edge (target)->goto_locus;
 		  int locus = goto_locus;
@@ -506,7 +533,15 @@ try_forward_edges (int mode, basic_block b)
 			  if (new_locus)
 			    locus = new_locus;
 
-			  goto_locus = locus;
+			  /* Forward the goto_locus as well, unless it is
+			     already present on the cond jump in B.  */
+			  if (!(any_condjump_p (BB_END (b))
+				&& locator_eq (INSN_LOCATOR (BB_END (b)),
+					       locus)))
+			    goto_locus = locus;
+
+			  if (MAY_HAVE_DEBUG_INSNS)
+			    move_debug_insns_from_forwarder_block (target);
 			}
 		    }
 		}
@@ -2690,6 +2725,9 @@ try_optimize_cfg (int mode)
 		    fprintf (dump_file,
 			     "Deleting fallthru block %i.\n",
 			     b->index);
+
+		  if (MAY_HAVE_DEBUG_INSNS)
+		    move_debug_insns_from_forwarder_block (b);
 
 		  c = b->prev_bb == ENTRY_BLOCK_PTR ? b->next_bb : b->prev_bb;
 		  redirect_edge_succ_nodup (single_pred_edge (b),

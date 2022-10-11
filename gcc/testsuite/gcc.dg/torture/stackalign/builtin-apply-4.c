@@ -1,6 +1,12 @@
 /* PR tree-optimization/20076 */
 /* { dg-do run } */
 
+#ifdef __LMP__
+#define STACK_ARG_SIZE 4
+#else
+#define STACK_ARG_SIZE 16
+#endif
+
 extern void abort (void);
 
 double
@@ -16,7 +22,7 @@ bar (int arg)
 {
   foo (arg);
   __builtin_return (__builtin_apply ((void (*) ()) foo,
-				     __builtin_apply_args (), 16));
+				     __builtin_apply_args (), STACK_ARG_SIZE));
 }
 
 int

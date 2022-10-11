@@ -645,7 +645,7 @@ tree_ssa_ifcombine (void)
 static bool
 gate_ifcombine (void)
 {
-  return 1;
+  return !flag_preserve_control_flow;
 }
 
 struct gimple_opt_pass pass_tree_ifcombine =

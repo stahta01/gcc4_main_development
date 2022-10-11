@@ -596,6 +596,95 @@ rtl_split_block (basic_block bb, void *insnp)
   return new_bb;
 }
 
+/* Return true if the single edge between blocks A and B is the only place
+   in RTL which holds some unique locus.  If SKIP_A is true, we don't look
+   into block A itself.  */
+
+bool
+unique_locus_on_edge_between_p (basic_block a, basic_block b, bool skip_a)
+{
+  const int goto_locus = EDGE_SUCC (a, 0)->goto_locus;
+  rtx insn, end;
+
+  if (!goto_locus)
+    return false;
+
+  /* First scan block B forward.  */
+  insn = BB_HEAD (b);
+  if (insn)
+    {
+      end = NEXT_INSN (BB_END (b));
+      while (insn != end && !NONDEBUG_INSN_P (insn))
+	insn = NEXT_INSN (insn);
+
+      if (insn != end && INSN_LOCATOR (insn) != 0
+	  && locator_eq (INSN_LOCATOR (insn), goto_locus))
+	return false;
+    }
+
+  /* If optimization is enabled, things may be moved around so also scan the
+     single successor of block B (if any) forward.  */
+  if (optimize && single_succ_p (b))
+    {
+      basic_block c = single_succ (b);
+
+      if (c == EXIT_BLOCK_PTR)
+	{
+	  /* If B is the original epilogue's block, A (most likely) ends with
+	     a user RETURN.  If the function returns a value, there will be
+	     insns in block A with the same locus but they might be optimized
+	     out later, so pretend that the RETURN holds a unique locus.  */
+	  if (insn
+	      && INSN_P (insn)
+	      && GET_CODE (PATTERN (insn)) != USE
+	      && INSN_LOCATOR (insn) != 0
+	      && locator_eq (INSN_LOCATOR (insn), epilogue_locator)
+	      && !locator_eq (goto_locus, epilogue_locator))
+	    return true;
+	}
+      else
+	{
+	  insn = BB_HEAD (c);
+	  end = NEXT_INSN (BB_END (c));
+
+	  while (insn != end && !NONDEBUG_INSN_P (insn))
+	    insn = NEXT_INSN (insn);
+
+	  if (insn != end && INSN_LOCATOR (insn) != 0
+	      && locator_eq (INSN_LOCATOR (insn), goto_locus))
+	    return false;
+	}
+    }
+
+  /* Then scan block A backward.  */
+  if (!skip_a)
+    {
+      insn = BB_END (a);
+      end = PREV_INSN (BB_HEAD (a));
+      while (insn != end
+	     && (!NONDEBUG_INSN_P (insn) || INSN_LOCATOR (insn) == 0))
+	insn = PREV_INSN (insn);
+
+      if (insn != end && locator_eq (INSN_LOCATOR (insn), goto_locus))
+	return false;
+    }
+
+  return true;
+}
+
+/* If the single edge between blocks A and B is the only place in RTL which
+   holds some unique locus, emit a nop with that locus between the blocks.  */
+
+static void
+emit_nop_for_unique_locus_between (basic_block a, basic_block b)
+{
+  if (!unique_locus_on_edge_between_p (a, b, false))
+    return;
+
+  BB_END (a) = emit_insn_after_noloc (gen_nop (), BB_END (a), a);
+  INSN_LOCATOR (BB_END (a)) = EDGE_SUCC (a, 0)->goto_locus;
+}
+
 /* Blocks A and B are to be merged into a single block A.  The insns
    are already contiguous.  */
 
@@ -674,15 +763,25 @@ rtl_merge_blocks (basic_block a, basic_block b)
 
   /* Delete everything marked above as well as crap that might be
      hanging out between the two blocks.  */
-  BB_HEAD (b) = NULL;
+  BB_END (a) = a_end;
+  BB_HEAD (b) = b_empty ? NULL_RTX : b_head;
   delete_insn_chain (del_first, del_last, true);
+
+  /* When not optimizing CFG and the edge is the only place in RTL which holds
+     some unique locus, emit a nop with that locus in between.  */
+  if (!optimize_cfg && !DECL_IGNORED_P (current_function_decl))
+    {
+      emit_nop_for_unique_locus_between (a, b);
+      a_end = BB_END (a);
+    }
 
   /* Reassociate the insns of B with A.  */
   if (!b_empty)
     {
       update_bb_for_insn_chain (a_end, b_debug_end, a);
 
-      a_end = b_debug_end;
+      BB_END (a) = b_debug_end;
+      BB_HEAD (b) = NULL_RTX;
     }
   else if (b_end != b_debug_end)
     {
@@ -694,11 +793,10 @@ rtl_merge_blocks (basic_block a, basic_block b)
 	reorder_insns_nobb (NEXT_INSN (a_end), PREV_INSN (b_debug_start),
 			    b_debug_end);
       update_bb_for_insn_chain (b_debug_start, b_debug_end, a);
-      a_end = b_debug_end;
+      BB_END (a) = b_debug_end;
     }
 
   df_bb_delete (b->index);
-  BB_END (a) = a_end;
 
   /* If B was a forwarder block, propagate the locus on the edge.  */
   if (forwarder_p && !EDGE_SUCC (b, 0)->goto_locus)
@@ -1663,26 +1761,197 @@ commit_one_edge_insertion (edge e)
     gcc_assert (!JUMP_P (last));
 }
 
-/* Update the CFG for all queued instructions.  */
+/* Return the next actual insn after INSN.  */
+
+static inline rtx
+next_actual_insn (rtx insn)
+{
+  while (insn)
+    {
+      insn = NEXT_INSN (insn);
+      if (!insn || !(NOTE_P (insn) && NOTE_KIND (insn) == NOTE_INSN_DELETED))
+	break;
+    }
+
+  return insn;
+}
+
+/* Helper functions for the hash table of edges.  */
+
+#define EDGE_TABLE_SIZE  32  /* rough size of the table */
+#define EDGE_TO_SPLIT    (EDGE_ALL_FLAGS + 1)
+#define EDGE_TO_REDIRECT (EDGE_TO_SPLIT << 1)
+
+static hashval_t
+edge_hash (const void *x)
+{
+  const_edge e = (const_edge) x;
+  return (hashval_t) (intptr_t) e->aux;
+}
+
+static int
+edge_eq (const void *x, const void *y)
+{
+  const_edge e1 = (const_edge) x;
+  const_edge e2 = (const_edge) y;
+  rtx insn1, insn2;
+
+  for (insn1 = e1->insns.r, insn2 = e2->insns.r;
+       insn1 && insn2;
+       insn1 = next_actual_insn (insn1), insn2 = next_actual_insn (insn2))
+    {
+      if (!INSN_P (insn1) || GET_CODE (PATTERN (insn1)) != SET)
+	return 0;
+
+      if (!INSN_P (insn2) || GET_CODE (PATTERN (insn2)) != SET)
+	return 0;
+ 
+      if (!rtx_equal_p (PATTERN (insn1), PATTERN (insn2)))
+	return 0;
+
+      if (!locator_eq (INSN_LOCATOR (insn1), INSN_LOCATOR (insn2)))
+	return 0;
+    }
+
+  if (insn1 || insn2)
+    return 0;
+
+  return 1;
+}
+
+/* Return the hash value for edge E.  */
+
+static hashval_t
+hash_edge (edge e)
+{
+  hashval_t hash = 0;
+  rtx insn;
+
+  for (insn = e->insns.r; insn; insn = next_actual_insn (insn))
+    {
+      if (!INSN_P (insn) || GET_CODE (PATTERN (insn)) != SET)
+	{
+	  hash = iterative_hash_object (INSN_UID (insn), hash);
+	  return hash;
+	}
+
+      hash = iterative_hash_rtx (PATTERN (insn), hash);
+    }
+
+  return hash;
+}
+
+/* Callback for table traversal.  Split the edges marked as such.  */
+
+static int
+split_edges (void **slot, void *data ATTRIBUTE_UNUSED)
+{
+  edge e = *(edge *)slot;
+
+  if (e->flags & EDGE_TO_SPLIT)
+    {
+      rtx insns = e->insns.r;
+      basic_block bb;
+  
+      e->insns.r = NULL_RTX;
+      e->flags &= ~EDGE_TO_SPLIT;
+      e->aux = NULL;
+      bb = split_edge (e);
+      gcc_assert (single_pred_edge (bb) == e);
+      single_succ_edge (bb)->insns.r = insns;
+    }
+
+  return 1;
+}
+
+/* Update the CFG for all instructions queued on edges.  */
 
 void
 commit_edge_insertions (void)
 {
+  htab_t edge_htab;
   basic_block bb;
+  edge e;
+  edge_iterator ei;
 
 #ifdef ENABLE_CHECKING
-  verify_flow_info ();
+  if (!currently_expanding_to_rtl)
+    verify_flow_info ();
 #endif
 
-  FOR_BB_BETWEEN (bb, ENTRY_BLOCK_PTR, EXIT_BLOCK_PTR, next_bb)
-    {
-      edge e;
-      edge_iterator ei;
+  /* For each basic block, the incoming edges are hashed based on the queue
+     of instructions inserted on them.  When two edges are found equivalent,
+     we split the first, push the instructions onto the new fallthrough edge
+     and redirect the second one to the new basic block.  This will avoid
+     creating duplicate basic blocks when the instructions are inserted in
+     the RTL stream.  */
+  edge_htab = htab_create (EDGE_TABLE_SIZE, edge_hash, edge_eq, NULL);
 
-      FOR_EACH_EDGE (e, ei, bb->succs)
-	if (e->insns.r)
-	  commit_one_edge_insertion (e);
+  FOR_BB_BETWEEN (bb, ENTRY_BLOCK_PTR->next_bb, EXIT_BLOCK_PTR, next_bb)
+    {
+      FOR_EACH_EDGE (e, ei, bb->preds)
+	if (e->insns.r
+	    && (e->flags & EDGE_ABNORMAL) == 0
+	    && htab_elements (edge_htab) < EDGE_TABLE_SIZE)
+	  {
+	    hashval_t hash = hash_edge (e);
+	    edge *slot
+	      = (edge *)htab_find_slot_with_hash (edge_htab, e, hash, INSERT);
+
+	    if (*slot)
+	      {
+		/* We have found an edge with the same insns.  Point E to
+		   it and mark both edges for later processing.  */
+		e->flags |= EDGE_TO_REDIRECT;
+		e->aux = *slot;
+		(*slot)->flags |= EDGE_TO_SPLIT;
+	      }
+	    else
+	      {
+		/* We haven't found any edge.  Save the hash value and
+		   insert E in the hash table.  */
+		e->aux = (PTR) (intptr_t) hash;
+		*slot = e;
+	      }
+	  }
+
+      if (htab_elements (edge_htab) == 0)
+	continue;
+
+      /* We can't split and redirect in one go because redirecting can
+	 reorder the edges and the target of a redirected edge needs to
+	 have been already split.  */
+      htab_traverse_noresize (edge_htab, split_edges, NULL);
+
+      for (ei = ei_start (bb->preds); (e = ei_safe_edge (ei)); )
+	if (e->flags & EDGE_TO_REDIRECT)
+	  {
+	    basic_block dest = ((edge)e->aux)->dest;
+	    e->insns.r = NULL_RTX;
+	    e->flags &= ~EDGE_TO_REDIRECT;
+	    e->aux = NULL;
+	    redirect_edge_and_branch_force (e, dest);
+	  }
+	else
+	  {
+	    e->aux = NULL;
+	    ei_next (&ei);
+	  }
+
+      htab_empty (edge_htab);
     }
+
+  htab_delete (edge_htab);
+
+  /* Now we can proceed with the actual insertion in the RTL stream.  */
+  FOR_BB_BETWEEN (bb, ENTRY_BLOCK_PTR, EXIT_BLOCK_PTR, next_bb)
+    FOR_EACH_EDGE (e, ei, bb->succs)
+     if (e->insns.r)
+	{
+	  if (currently_expanding_to_rtl)
+	    rebuild_jump_labels_chain (e->insns.r);
+	  commit_one_edge_insertion (e);
+	}
 }
 
 
@@ -1899,7 +2168,8 @@ rtl_verify_flow_info_1 (void)
   /* Now check the basic blocks (boundaries etc.) */
   FOR_EACH_BB_REVERSE (bb)
     {
-      int n_fallthru = 0, n_eh = 0, n_call = 0, n_abnormal = 0, n_branch = 0;
+      int n_fallthru = 0, n_branch = 0, n_abnormal_call = 0, n_sibcall = 0;
+      int n_eh = 0, n_abnormal = 0;
       edge e, fallthru = NULL;
       rtx note;
       edge_iterator ei;
@@ -1936,13 +2206,13 @@ rtl_verify_flow_info_1 (void)
 		}
 	      if (e->flags & EDGE_FALLTHRU)
 		{
-		  error ("fallthru edge crosses section boundary (bb %i)",
+		  error ("fallthru edge crosses section boundary in bb %i",
 			 e->src->index);
 		  err = 1;
 		}
 	      if (e->flags & EDGE_EH)
 		{
-		  error ("EH edge crosses section boundary (bb %i)",
+		  error ("EH edge crosses section boundary in bb %i",
 			 e->src->index);
 		  err = 1;
 		}
@@ -1953,31 +2223,35 @@ rtl_verify_flow_info_1 (void)
 	      err = 1;
 	    }
 
-	  if ((e->flags & ~(EDGE_DFS_BACK
-			    | EDGE_CAN_FALLTHRU
-			    | EDGE_IRREDUCIBLE_LOOP
-			    | EDGE_LOOP_EXIT
-			    | EDGE_CROSSING
-			    | EDGE_PRESERVE)) == 0)
+	  if ((e->flags & (EDGE_FAKE
+			   | EDGE_FALLTHRU
+			   | EDGE_ABNORMAL_CALL
+			   | EDGE_SIBCALL
+			   | EDGE_EH
+			   | EDGE_ABNORMAL)) == 0)
 	    n_branch++;
 
 	  if (e->flags & EDGE_ABNORMAL_CALL)
-	    n_call++;
+	    n_abnormal_call++;
+
+	  if (e->flags & EDGE_SIBCALL)
+	    n_sibcall++;
 
 	  if (e->flags & EDGE_EH)
 	    n_eh++;
-	  else if (e->flags & EDGE_ABNORMAL)
+
+	  if (e->flags & EDGE_ABNORMAL)
 	    n_abnormal++;
 	}
 
       if (n_eh && !find_reg_note (BB_END (bb), REG_EH_REGION, NULL_RTX))
 	{
-	  error ("missing REG_EH_REGION note in the end of bb %i", bb->index);
+	  error ("missing REG_EH_REGION note at the end of bb %i", bb->index);
 	  err = 1;
 	}
       if (n_eh > 1)
 	{
-	  error ("too many eh edges %i", bb->index);
+	  error ("too many exception handling edges in bb %i", bb->index);
 	  err = 1;
 	}
       if (n_branch
@@ -1990,29 +2264,35 @@ rtl_verify_flow_info_1 (void)
 	}
       if (n_fallthru && any_uncondjump_p (BB_END (bb)))
 	{
-	  error ("fallthru edge after unconditional jump %i", bb->index);
+	  error ("fallthru edge after unconditional jump in bb %i", bb->index);
 	  err = 1;
 	}
       if (n_branch != 1 && any_uncondjump_p (BB_END (bb)))
 	{
-	  error ("wrong number of branch edges after unconditional jump %i",
-		 bb->index);
+	  error ("wrong number of branch edges after unconditional jump"
+		 " in bb %i", bb->index);
 	  err = 1;
 	}
       if (n_branch != 1 && any_condjump_p (BB_END (bb))
 	  && JUMP_LABEL (BB_END (bb)) != BB_HEAD (fallthru->dest))
 	{
-	  error ("wrong amount of branch edges after conditional jump %i",
-		 bb->index);
+	  error ("wrong amount of branch edges after conditional jump"
+		 " in bb %i", bb->index);
 	  err = 1;
 	}
-      if (n_call && !CALL_P (BB_END (bb)))
+      if (n_abnormal_call && !CALL_P (BB_END (bb)))
 	{
-	  error ("call edges for non-call insn in bb %i", bb->index);
+	  error ("abnormal call edges for non-call insn in bb %i", bb->index);
 	  err = 1;
 	}
-      if (n_abnormal
-	  && (!CALL_P (BB_END (bb)) && n_call != n_abnormal)
+      if (n_sibcall && !CALL_P (BB_END (bb)))
+	{
+	  error ("sibcall edges for non-call insn in bb %i", bb->index);
+	  err = 1;
+	}
+      if (n_abnormal > n_eh
+	  && !(CALL_P (BB_END (bb))
+	       && n_abnormal == n_abnormal_call + n_sibcall)
 	  && (!JUMP_P (BB_END (bb))
 	      || any_condjump_p (BB_END (bb))
 	      || any_uncondjump_p (BB_END (bb))))
@@ -2869,33 +3149,10 @@ cfg_layout_merge_blocks (basic_block a, basic_block b)
     try_redirect_by_replacing_jump (EDGE_SUCC (a, 0), b, true);
   gcc_assert (!JUMP_P (BB_END (a)));
 
-  /* When not optimizing and the edge is the only place in RTL which holds
+  /* When not optimizing CFG and the edge is the only place in RTL which holds
      some unique locus, emit a nop with that locus in between.  */
-  if (!optimize && EDGE_SUCC (a, 0)->goto_locus)
-    {
-      rtx insn = BB_END (a), end = PREV_INSN (BB_HEAD (a));
-      int goto_locus = EDGE_SUCC (a, 0)->goto_locus;
-
-      while (insn != end && (!INSN_P (insn) || INSN_LOCATOR (insn) == 0))
-	insn = PREV_INSN (insn);
-      if (insn != end && locator_eq (INSN_LOCATOR (insn), goto_locus))
-	goto_locus = 0;
-      else
-	{
-	  insn = BB_HEAD (b);
-	  end = NEXT_INSN (BB_END (b));
-	  while (insn != end && !INSN_P (insn))
-	    insn = NEXT_INSN (insn);
-	  if (insn != end && INSN_LOCATOR (insn) != 0
-	      && locator_eq (INSN_LOCATOR (insn), goto_locus))
-	    goto_locus = 0;
-	}
-      if (goto_locus)
-	{
-	  BB_END (a) = emit_insn_after_noloc (gen_nop (), BB_END (a), a);
-	  INSN_LOCATOR (BB_END (a)) = goto_locus;
-	}
-    }
+  if (!optimize_cfg && !DECL_IGNORED_P (current_function_decl))
+    emit_nop_for_unique_locus_between (a, b);
 
   /* Possible line number notes should appear in between.  */
   if (b->il.rtl->header)

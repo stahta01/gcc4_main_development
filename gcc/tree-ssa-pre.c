@@ -1279,9 +1279,10 @@ translate_vuse_through_block (VEC (vn_reference_op_s, heap) *operands,
       if (use_oracle)
 	{
 	  bitmap visited = NULL;
+	  unsigned int cnt;
 	  /* Try to find a vuse that dominates this phi node by skipping
 	     non-clobbering statements.  */
-	  vuse = get_continuation_for_phi (phi, &ref, &visited, false);
+	  vuse = get_continuation_for_phi (phi, &ref, &cnt, &visited, false);
 	  if (visited)
 	    BITMAP_FREE (visited);
 	}
@@ -2706,7 +2707,7 @@ create_component_ref_by_pieces_1 (basic_block block, vn_reference_t ref,
       {
 	tree baseop = create_component_ref_by_pieces_1 (block, ref, operand,
 							stmts, domstmt);
-	tree offset = currop->op0;
+	tree offset = currop->op0, t;
 	if (!baseop)
 	  return NULL_TREE;
 	if (TREE_CODE (baseop) == ADDR_EXPR
@@ -2722,7 +2723,9 @@ create_component_ref_by_pieces_1 (basic_block block, vn_reference_t ref,
 						     off));
 	    baseop = build_fold_addr_expr (base);
 	  }
-	return fold_build2 (MEM_REF, currop->type, baseop, offset);
+	t = fold_build2 (MEM_REF, currop->type, baseop, offset);
+	REF_REVERSE_STORAGE_ORDER (t) = currop->reverse;
+	return t;
       }
       break;
     case TARGET_MEM_REF:
@@ -2796,25 +2799,17 @@ create_component_ref_by_pieces_1 (basic_block block, vn_reference_t ref,
       break;
     case BIT_FIELD_REF:
       {
-	tree folded;
 	tree genop0 = create_component_ref_by_pieces_1 (block, ref, operand,
 							stmts, domstmt);
-	pre_expr op1expr = get_or_alloc_expr_for (currop->op0);
-	pre_expr op2expr = get_or_alloc_expr_for (currop->op1);
-	tree genop1;
-	tree genop2;
+	tree op1 = currop->op0;
+	tree op2 = currop->op1;
+	tree t;
 
 	if (!genop0)
 	  return NULL_TREE;
-	genop1 = find_or_generate_expression (block, op1expr, stmts, domstmt);
-	if (!genop1)
-	  return NULL_TREE;
-	genop2 = find_or_generate_expression (block, op2expr, stmts, domstmt);
-	if (!genop2)
-	  return NULL_TREE;
-	folded = fold_build3 (BIT_FIELD_REF, currop->type, genop0, genop1,
-			      genop2);
-	return folded;
+	t = build3 (BIT_FIELD_REF, currop->type, genop0, op1, op2);
+	REF_REVERSE_STORAGE_ORDER (t) = currop->reverse;
+	return fold (t);
       }
 
       /* For array ref vn_reference_op's, operand 1 of the array ref

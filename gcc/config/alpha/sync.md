@@ -43,6 +43,16 @@
   "mb"
   [(set_attr "type" "mb")])
 
+(define_peephole2
+  [(set (match_operand:BLK 0 "" "")
+	(unspec:BLK [(match_dup 0)] UNSPEC_MB))
+   (set (match_operand:BLK 1 "" "")
+	(unspec:BLK [(match_dup 1)] UNSPEC_MB))]
+  ""
+  [(set (match_operand:BLK 0 "" "")
+	(unspec:BLK [(match_dup 0)] UNSPEC_MB))]
+  "")
+
 (define_insn "load_locked_<mode>"
   [(set (match_operand:I48MODE 0 "register_operand" "=r")
 	(unspec_volatile:I48MODE

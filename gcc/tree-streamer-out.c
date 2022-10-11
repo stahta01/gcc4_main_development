@@ -102,9 +102,14 @@ pack_ts_base_value_fields (struct bitpack_d *bp, tree expr)
   bp_pack_value (bp, TREE_DEPRECATED (expr), 1);
   if (TYPE_P (expr))
     {
-      bp_pack_value (bp, TYPE_SATURATING (expr), 1);
+      if (AGGREGATE_TYPE_P (expr))
+	bp_pack_value (bp, TYPE_REVERSE_STORAGE_ORDER (expr), 1);
+      else
+	bp_pack_value (bp, TYPE_SATURATING (expr), 1);
       bp_pack_value (bp, TYPE_ADDR_SPACE (expr), 8);
     }
+  else if (TREE_CODE (expr) == BIT_FIELD_REF || TREE_CODE (expr) == MEM_REF)
+    bp_pack_value (bp, REF_REVERSE_STORAGE_ORDER (expr), 1);
   else if (TREE_CODE (expr) == SSA_NAME)
     bp_pack_value (bp, SSA_NAME_IS_DEFAULT_DEF (expr), 1);
   else
@@ -181,6 +186,9 @@ pack_ts_decl_common_value_fields (struct bitpack_d *bp, tree expr)
       bp_pack_value (bp, expr->decl_common.off_align, 8);
     }
 
+  if (TREE_CODE (expr) == VAR_DECL)
+    bp_pack_value (bp, DECL_NONLOCAL_FRAME (expr), 1);
+
   if (TREE_CODE (expr) == RESULT_DECL
       || TREE_CODE (expr) == PARM_DECL
       || TREE_CODE (expr) == VAR_DECL)
@@ -189,7 +197,6 @@ pack_ts_decl_common_value_fields (struct bitpack_d *bp, tree expr)
       if (TREE_CODE (expr) == VAR_DECL
 	  || TREE_CODE (expr) == PARM_DECL)
 	bp_pack_value (bp, DECL_HAS_VALUE_EXPR_P (expr), 1);
-      bp_pack_value (bp, DECL_RESTRICTED_P (expr), 1);
     }
 }
 

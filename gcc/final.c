@@ -127,11 +127,23 @@ rtx current_output_insn;
 /* Line number of last NOTE.  */
 static int last_linenum;
 
-/* Last discriminator written to assembly.  */
+/* Column number of last NOTE.  */
+static int last_colnum;
+
+/* Discriminator written to assembly.  */
 static int last_discriminator;
 
-/* Discriminator of current block.  */
+/* Discriminator to be written to assembly for current instruction.
+   Note: depending on flag_debug_instances, this is either the
+   bb_discriminator, or some value provided by a language front-end.  */
 static int discriminator;
+
+/* Discriminator identifying current basic block among others sharing the
+   same locus.  */
+static int bb_discriminator;
+
+/* Basic block discriminator for previous instruction.  */
+static int last_bb_discriminator;
 
 /* Highest line number in current block.  */
 static int high_block_linenum;
@@ -147,7 +159,7 @@ static const char *override_filename;
 static int override_linenum;
 
 /* Whether to force emission of a line note before the next insn.  */
-static bool force_source_line = false;
+static bool force_source_line ;
 
 extern const int length_unit_log; /* This is defined in insn-attrtab.c.  */
 
@@ -193,6 +205,10 @@ static int app_on;
    Zero otherwise.  */
 
 rtx final_sequence;
+
+/* If the last insn was a sequence, this contains the sequence rtx.
+   Zero otherwise.  */
+static rtx last_final_sequence;
 
 #ifdef ASSEMBLER_DIALECT
 
@@ -794,6 +810,7 @@ compute_alignments (void)
       /* In case block is frequent and reached mostly by non-fallthru edge,
 	 align it.  It is most likely a first block of loop.  */
       if (has_fallthru
+	  && !(single_succ_p (bb) && single_succ (bb) == EXIT_BLOCK_PTR)
 	  && optimize_bb_for_speed_p (bb)
 	  && branch_frequency + fallthru_frequency > freq_threshold
 	  && (branch_frequency
@@ -836,7 +853,53 @@ struct rtl_opt_pass pass_compute_alignments =
   | TODO_ggc_collect                    /* todo_flags_finish */
  }
 };
+
+/* Grow the LABEL_ALIGN array after new labels are created.  */
 
+static void 
+grow_label_align (void)
+{
+  int old = max_labelno;
+  int n_labels;
+  int n_old_labels;
+
+  max_labelno = max_label_num ();
+
+  n_labels = max_labelno - min_labelno + 1;
+  n_old_labels = old - min_labelno + 1;
+
+  label_align = XRESIZEVEC (struct label_alignment, label_align, n_labels);
+
+  /* Range of labels grows monotonically in the function.  Failing here
+     means that the initialization of array got lost.  */
+  gcc_assert (n_old_labels <= n_labels);
+
+  memset (label_align + n_old_labels, 0,
+          (n_labels - n_old_labels) * sizeof (struct label_alignment));
+}
+
+/* Update the already computed alignment information.  LABEL_PAIRS is a vector
+   made up of pairs of labels for which the alignment information of the first
+   element will be copied from that of the second element.  */
+
+void
+update_alignments (VEC(rtx,heap) *label_pairs)
+{
+  unsigned int i = 0;
+  rtx iter, label;
+
+  if (max_labelno != max_label_num ())
+    grow_label_align ();
+
+  FOR_EACH_VEC_ELT (rtx, label_pairs, i, iter)
+    if (i & 1)
+      {
+	LABEL_TO_ALIGNMENT (label) = LABEL_TO_ALIGNMENT (iter);
+	LABEL_TO_MAX_SKIP (label) = LABEL_TO_MAX_SKIP (iter);
+      }
+    else
+      label = iter;
+}
 
 /* Make a pass over all insns and compute their actual lengths by shortening
    any branches of variable length if possible.  */
@@ -877,25 +940,7 @@ shorten_branches (rtx first ATTRIBUTE_UNUSED)
   uid_shuid = XNEWVEC (int, max_uid);
 
   if (max_labelno != max_label_num ())
-    {
-      int old = max_labelno;
-      int n_labels;
-      int n_old_labels;
-
-      max_labelno = max_label_num ();
-
-      n_labels = max_labelno - min_labelno + 1;
-      n_old_labels = old - min_labelno + 1;
-
-      label_align = XRESIZEVEC (struct label_alignment, label_align, n_labels);
-
-      /* Range of labels grows monotonically in the function.  Failing here
-         means that the initialization of array got lost.  */
-      gcc_assert (n_old_labels <= n_labels);
-
-      memset (label_align + n_old_labels, 0,
-	      (n_labels - n_old_labels) * sizeof (struct label_alignment));
-    }
+    grow_label_align ();
 
   /* Initialize label_align and set up uid_shuid to be strictly
      monotonically rising with insn order.  */
@@ -1536,8 +1581,13 @@ final_start_function (rtx first ATTRIBUTE_UNUSED, FILE *file,
   last_filename = locator_file (prologue_locator);
   last_linenum = locator_line (prologue_locator);
   last_discriminator = discriminator = 0;
+  last_bb_discriminator = bb_discriminator = 0;
+
+  last_final_sequence = final_sequence = NULL_RTX;
 
   high_block_linenum = high_function_linenum = last_linenum;
+
+  force_source_line = false;
 
   if (!DECL_IGNORED_P (current_function_decl))
     debug_hooks->begin_prologue (last_linenum, last_filename);
@@ -1939,13 +1989,14 @@ final_scan_insn (rtx insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 	  if ((*seen & (SEEN_EMITTED | SEEN_BB)) == SEEN_BB)
 	    {
 	      *seen |= SEEN_EMITTED;
-	      force_source_line = true;
+	      /* Do not force a source line if there is already one.  */
+	      if (!non_final_source_line (NEXT_INSN (insn)))
+		force_source_line = true;
 	    }
 	  else
 	    *seen |= SEEN_BB;
 
-          discriminator = NOTE_BASIC_BLOCK (insn)->discriminator;
-
+	  bb_discriminator = NOTE_BASIC_BLOCK (insn)->discriminator;
 	  break;
 
 	case NOTE_INSN_EH_REGION_BEG:
@@ -1961,11 +2012,15 @@ final_scan_insn (rtx insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 	case NOTE_INSN_PROLOGUE_END:
 	  targetm.asm_out.function_end_prologue (file);
 	  profile_after_prologue (file);
+	  if (!DECL_IGNORED_P (current_function_decl))
+	    debug_hooks->end_prologue (last_linenum, last_filename);
 
 	  if ((*seen & (SEEN_EMITTED | SEEN_NOTE)) == SEEN_NOTE)
 	    {
 	      *seen |= SEEN_EMITTED;
-	      force_source_line = true;
+	      /* Do not force a source line if there is already one.  */
+	      if (!non_final_source_line (NEXT_INSN (insn)))
+		force_source_line = true;
 	    }
 	  else
 	    *seen |= SEEN_NOTE;
@@ -1989,13 +2044,13 @@ final_scan_insn (rtx insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 
 	case NOTE_INSN_FUNCTION_BEG:
 	  app_disable ();
-	  if (!DECL_IGNORED_P (current_function_decl))
-	    debug_hooks->end_prologue (last_linenum, last_filename);
 
 	  if ((*seen & (SEEN_EMITTED | SEEN_NOTE)) == SEEN_NOTE)
 	    {
 	      *seen |= SEEN_EMITTED;
-	      force_source_line = true;
+	      /* Do not force a source line if there is already one.  */
+	      if (!non_final_source_line (NEXT_INSN (insn)))
+		force_source_line = true;
 	    }
 	  else
 	    *seen |= SEEN_NOTE;
@@ -2279,12 +2334,48 @@ final_scan_insn (rtx insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 
 	    break;
 	  }
-	/* Output this line note if it is the first or the last line
-	   note in a row.  */
+
+	/* Output a source line note if needed.  */
 	if (!DECL_IGNORED_P (current_function_decl)
 	    && notice_source_line (insn, &is_stmt))
-	  (*debug_hooks->source_line) (last_linenum, last_filename,
-				       last_discriminator, is_stmt);
+	  {
+	    if (HAS_MULTI_LOCATION (insn))
+	      {
+		const char *last_file = NULL;
+		int last_line = 0, last_column = 0, last_instance = 0;
+		int instance = 0;
+		bool multi_stmt_line = false;
+		unsigned int i = 0;
+
+		while (true)
+		  {
+		    expanded_location xloc
+		      = insn_multi_location (insn, i++,
+					     &instance, &multi_stmt_line);
+		    if (!xloc.file)
+		      break;
+		    if (xloc.line != last_line
+		        || xloc.file != last_file
+		        || (flag_debug_instances && instance != last_instance)
+			|| (flag_preserve_control_flow && multi_stmt_line
+			      && xloc.column != last_column))
+		      {
+			debug_hooks->source_line (xloc.line, xloc.file,
+						  (flag_preserve_control_flow
+						    && multi_stmt_line)
+						    ? xloc.column : 0,
+						  instance, false);
+			last_line = xloc.line;
+			last_file = xloc.file;
+			last_column = xloc.column;
+			last_instance = instance;
+		      }
+		  }
+	      }
+
+	    debug_hooks->source_line (last_linenum, last_filename, last_colnum,
+				      last_discriminator, is_stmt);
+	  }
 
 	if (GET_CODE (body) == ASM_INPUT)
 	  {
@@ -2373,7 +2464,7 @@ final_scan_insn (rtx insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 	    next = final_scan_insn (XVECEXP (body, 0, 0), file, 0, 1, seen);
 	    if (next != XVECEXP (body, 0, 1))
 	      {
-		final_sequence = 0;
+		final_sequence = NULL_RTX;
 		return next;
 	      }
 
@@ -2390,7 +2481,8 @@ final_scan_insn (rtx insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 #ifdef DBR_OUTPUT_SEQEND
 	    DBR_OUTPUT_SEQEND (file);
 #endif
-	    final_sequence = 0;
+	    last_final_sequence = final_sequence;
+	    final_sequence = NULL_RTX;
 
 	    /* If the insn requiring the delay slot was a CALL_INSN, the
 	       insns in the delay slot are actually executed before the
@@ -2403,6 +2495,8 @@ final_scan_insn (rtx insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 	      }
 	    break;
 	  }
+	else
+	  last_final_sequence = NULL_RTX;
 
 	/* We have a real machine instruction as rtl.  */
 
@@ -2688,8 +2782,6 @@ final_scan_insn (rtx insn, FILE *file, int optimize_p ATTRIBUTE_UNUSED,
 	  {
 	    rtx prev;
 
-	    gcc_assert (prev_nonnote_insn (insn) == last_ignored_compare);
-
 	    /* We have already processed the notes between the setter and
 	       the user.  Make sure we don't process them again, this is
 	       particularly important if one of the notes is a block
@@ -2775,21 +2867,55 @@ static bool
 notice_source_line (rtx insn, bool *is_stmt)
 {
   const char *filename;
-  int linenum;
+  int linenum, colnum, instance;
+  bool output_colnum = false;
+  bool multi_stmt_line = false;
 
   if (override_filename)
     {
       filename = override_filename;
       linenum = override_linenum;
+      colnum = 0;
     }
   else
     {
-      filename = insn_file (insn);
-      linenum = insn_line (insn);
+      expanded_location xloc
+	= insn_location (insn, &instance, &multi_stmt_line);
+      filename =  xloc.file;
+      linenum = xloc.line;
+      colnum = xloc.column;
+      if (flag_debug_instances)
+	discriminator = instance;
+      else
+	discriminator = bb_discriminator;
     }
 
   if (filename == NULL)
     return false;
+
+  /* If we're preserving control flow, output a location note with the column
+     number for every control flow change, as well as for the next instruction
+     if the delay slot of the jump was filled in order to work around the loss
+     of its discriminator.  Likewise for every instruction generated for a line
+     that contains multiple statements.  */
+  if (flag_preserve_control_flow
+      && (JUMP_P (insn)
+          || (last_final_sequence
+	      && JUMP_P (XVECEXP (last_final_sequence, 0, 0)))
+          || multi_stmt_line))
+    {
+      force_source_line = true;
+      output_colnum = true;
+    }
+
+  /* If this is an insn in a delay slot and with multiple location, output
+     the location notes.  Even if the last location is equal to that of the
+     delayed insn, there is very likely another location that is not.  */
+  if (final_sequence
+      && insn != XVECEXP (final_sequence, 0, 0)
+      && INSN_LOCATOR (insn) != INSN_LOCATOR (XVECEXP (final_sequence, 0, 0))
+      && HAS_MULTI_LOCATION (insn))
+    force_source_line = true;
 
   if (force_source_line
       || filename != last_filename
@@ -2798,19 +2924,26 @@ notice_source_line (rtx insn, bool *is_stmt)
       force_source_line = false;
       last_filename = filename;
       last_linenum = linenum;
+      last_colnum = output_colnum ? colnum : 0;
       last_discriminator = discriminator;
+      last_bb_discriminator = bb_discriminator;
       *is_stmt = true;
       high_block_linenum = MAX (last_linenum, high_block_linenum);
       high_function_linenum = MAX (last_linenum, high_function_linenum);
       return true;
     }
 
-  if (SUPPORTS_DISCRIMINATOR && last_discriminator != discriminator)
+  if (SUPPORTS_DISCRIMINATOR
+      && (last_discriminator != discriminator
+	  || last_bb_discriminator != bb_discriminator))
     {
       /* If the discriminator changed, but the line number did not,
          output the line table entry with is_stmt false so the
          debugger does not treat this as a breakpoint location.  */
+      if (last_colnum != 0)
+        last_colnum = colnum;
       last_discriminator = discriminator;
+      last_bb_discriminator = bb_discriminator;
       *is_stmt = false;
       return true;
     }

@@ -276,3 +276,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #endif /* __STDC_WANT_DEC_FP__ */
 
 #endif /* _FLOAT_H___ */
+
+#ifdef __MINGW32__
+#include_next <float.h>
+#endif

@@ -558,8 +558,9 @@ extern struct c_expr c_expr_sizeof_type (location_t, struct c_type_name *);
 extern struct c_expr parser_build_unary_op (location_t, enum tree_code,
     					    struct c_expr);
 extern struct c_expr parser_build_binary_op (location_t,
-    					     enum tree_code, struct c_expr,
-					     struct c_expr);
+					     enum tree_code,
+					     struct c_expr, location_t,
+					     struct c_expr, location_t);
 extern tree build_conditional_expr (location_t, tree, bool, tree, tree,
 				    tree, tree);
 extern tree build_compound_expr (location_t, tree, tree);
@@ -592,7 +593,7 @@ extern tree c_begin_stmt_expr (void);
 extern tree c_finish_stmt_expr (location_t, tree);
 extern tree c_process_expr_stmt (location_t, tree);
 extern tree c_finish_expr_stmt (location_t, tree);
-extern tree c_finish_return (location_t, tree, tree);
+extern tree c_finish_return (location_t, location_t, tree, tree);
 extern tree c_finish_bc_stmt (location_t, tree *, bool);
 extern tree c_finish_goto_label (location_t, tree);
 extern tree c_finish_goto_ptr (location_t, tree);

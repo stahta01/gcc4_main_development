@@ -59,6 +59,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "pointer-set.h"
 #include "plugin.h"
 #include "c-family/c-ada-spec.h"
+#include "c-family/c-xref.h"
+#include "gli.h"
 
 /* In grokdeclarator, distinguish syntactic contexts of declarators.  */
 enum decl_context
@@ -2238,9 +2240,18 @@ merge_decls (tree newdecl, tree olddecl, tree newtype, tree oldtype)
 	       && !C_DECL_BUILTIN_PROTOTYPE (olddecl)))
     DECL_SOURCE_LOCATION (newdecl) = DECL_SOURCE_LOCATION (olddecl);
 
-  /* Merge the initialization information.  */
-   if (DECL_INITIAL (newdecl) == 0)
-    DECL_INITIAL (newdecl) = DECL_INITIAL (olddecl);
+  /* Generate reference to original prototype */
+  if (DECL_INITIAL (newdecl) != 0 || DECL_INITIAL (olddecl) == 0)
+    generate_reference (olddecl, DECL_SOURCE_LOCATION (olddecl), '\0');
+
+  if (DECL_INITIAL (newdecl) == 0)
+    {
+      /* Merge the initialization information.  */
+      DECL_INITIAL (newdecl) = DECL_INITIAL (olddecl);
+
+      /* Generate special source reference to the duplicated declaration.  */
+      generate_reference (olddecl, DECL_SOURCE_LOCATION (newdecl), 'c');
+    }
 
   /* Merge the threadprivate attribute.  */
   if (TREE_CODE (olddecl) == VAR_DECL && C_DECL_THREADPRIVATE_P (olddecl))
@@ -7519,6 +7530,8 @@ finish_enum (tree enumtype, tree values, tree attributes)
 	  if (TREE_TYPE (ini) != integer_type_node)
 	    ini = convert (enumtype, ini);
 
+	  generate_enum_reference (enu, 0, '\0');
+
 	  DECL_INITIAL (enu) = ini;
 	  TREE_PURPOSE (pair) = DECL_NAME (enu);
 	  TREE_VALUE (pair) = ini;
@@ -8354,7 +8367,8 @@ finish_function (void)
 	 annotate_one_with_locus.  A cleaner solution might be to
 	 ensure ! should_carry_locus_p (stmt), but that needs a flag.
       */
-      c_finish_return (BUILTINS_LOCATION, integer_zero_node, NULL_TREE);
+      c_finish_return (BUILTINS_LOCATION, BUILTINS_LOCATION,
+		       integer_zero_node, NULL_TREE);
     }
 
   /* Tie off the statement tree for this function.  */
@@ -8428,6 +8442,14 @@ finish_function (void)
       if (!decl_function_context (fndecl))
 	{
 	  invoke_plugin_callbacks (PLUGIN_PRE_GENERICIZE, fndecl);
+
+	  /* Handle -fdump-xref. Should be done via a plug-in??? */
+	  if (flag_dump_xref && DECL_SAVED_TREE (fndecl))
+	    { 
+	      traverse_tree_xref (fndecl, 0, ' ', false);
+	      generate_reference (fndecl, input_location, 't');
+	    }
+
 	  c_genericize (fndecl);
 
 	  /* ??? Objc emits functions after finalizing the compilation unit.
@@ -8725,6 +8747,7 @@ build_function_declarator (struct c_arg_info *args,
   ret->kind = cdk_function;
   ret->declarator = target;
   ret->u.arg_info = args;
+  ret->id_loc = target->id_loc;
   return ret;
 }
 
@@ -10008,6 +10031,27 @@ c_write_global_declarations (void)
       dump_ada_specs (collect_all_refs, NULL);
     }
 
+  /* Handle -fdump-xref */
+  if (flag_dump_xref)
+    {
+      /* Generate declarations xrefs */
+      FOR_EACH_VEC_ELT (tree, all_translation_units, i, t)
+	traverse_tree_xref (BLOCK_VARS (DECL_INITIAL (t)), 0, ' ', true);
+
+      /* Generate external references xrefs */
+      traverse_tree_xref (ext_block, 0, '\0', true);
+
+      /* Functions have been dumped by c_genericize */
+
+      /* Output references for main file */
+      output_references (main_input_filename, true);
+    }
+
+  /* Don't waste time on further processing if -fsyntax-only.
+     Continue for warning and errors issued during lowering though.  */
+  if (flag_syntax_only)
+    return;
+
   if (ext_block)
     {
       tree tmp = BLOCK_VARS (ext_block);
@@ -10032,6 +10076,9 @@ c_write_global_declarations (void)
   /* We're done parsing; proceed to optimize and emit assembly.
      FIXME: shouldn't be the front end's responsibility to call this.  */
   cgraph_finalize_compilation_unit ();
+
+  /* Past this point, all GLI files generation must be done.  */
+  gli_finalize ();
 
   timevar_stop (TV_PHASE_CGRAPH);
   timevar_start (TV_PHASE_DBGINFO);

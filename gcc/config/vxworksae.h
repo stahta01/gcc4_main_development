@@ -24,21 +24,23 @@ along with GCC; see the file COPYING3.  If not see
    vxworks.h definitions, without the -mrtp bits.  */
 
 /* The directory containing the VxWorks AE target headers.  */
-#define VXWORKSAE_TARGET_DIR \
-  "/home/tornado/vxworks-ae/latest/target"
+#define VXWORKSAE_TARGET_DIR(SUBDIR) "%:getenv(WIND_BASE /target" SUBDIR ")"
 
-/* Include target/vThreads/h or target/h (depending on the compilation
-   mode), and then target/val/h (in either mode).  The macros defined
-   are in the user's namespace, but the VxWorks headers require
-   them.  */
+/* Include target/vThreads/h or target/h depending on the compilation mode wrt
+   vthreads, then target/val/h in either mode.  The macros defined are in the
+   user's namespace, but the VxWorks headers require them.  Old versions of the
+   WRS compilers had -mvthreads intended to differentiate the modes.  This was
+   phase out in favor of -DVTHREADS only, but the situation wrt multilibs is
+   unclear so we have retained it for this particular purpose.  */
+
 #undef VXWORKS_ADDITIONAL_CPP_SPEC
-#define VXWORKS_ADDITIONAL_CPP_SPEC "					\
- %{!nostdinc:%{isystem*}}						\
- %{mvthreads:-DVTHREADS=1						\
-	 %{!nostdinc:-isystem " VXWORKSAE_TARGET_DIR "/vThreads/h}}	\
- %{!mvthreads:-DAE653_BUILD=1						\
-	 %{!nostdinc:-isystem " VXWORKSAE_TARGET_DIR "/h}}		\
- %{!nostdinc:-isystem " VXWORKSAE_TARGET_DIR "/val/h}"
+#define VXWORKS_ADDITIONAL_CPP_SPEC "				\
+ %{mvthreads:-DVTHREADS} 					\
+ %{!nostdinc:%{isystem*} 					\
+     -isystem %{!mvthreads:%{!DVTHREADS:" VXWORKSAE_TARGET_DIR("/h") "}}     \
+              %{mvthreads|DVTHREADS:" VXWORKSAE_TARGET_DIR("/vThreads/h") "} \
+     -isystem " VXWORKSAE_TARGET_DIR("/val/h") "		\
+  }"
 
 #undef VXWORKS_LIB_SPEC
 #define VXWORKS_LIB_SPEC ""
@@ -68,3 +70,7 @@ along with GCC; see the file COPYING3.  If not see
     }                                                                   \
   while (0)
 
+/* Do VxWorks-specific parts of TARGET_OPTION_OVERRIDE.  */
+#undef VXWORKS_OVERRIDE_OPTIONS
+#define VXWORKS_OVERRIDE_OPTIONS vxworks_override_options ()
+extern void vxworks_override_options (void);

@@ -41,6 +41,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "c-family/c-objc.h"
 #include "timevar.h"
+#include "c-family/c-xref.h"
 
 /* The various kinds of conversion.  */
 
@@ -146,7 +147,8 @@ static struct z_candidate * tourney (struct z_candidate *);
 static int equal_functions (tree, tree);
 static int joust (struct z_candidate *, struct z_candidate *, bool);
 static int compare_ics (conversion *, conversion *);
-static tree build_over_call (struct z_candidate *, int, tsubst_flags_t);
+static tree build_over_call (struct z_candidate *, int, tsubst_flags_t,
+			     location_t);
 static tree build_java_interface_fn_ref (tree, tree);
 #define convert_like(CONV, EXPR, COMPLAIN)			\
   convert_like_real ((CONV), (EXPR), NULL_TREE, 0, 0,		\
@@ -3894,7 +3896,7 @@ build_new_function_call (tree fn, VEC(tree,gc) **args, bool koenig_p,
          about peculiar null pointer conversion.  */
       if (TREE_CODE (fn) == TEMPLATE_ID_EXPR)
         flags |= LOOKUP_EXPLICIT_TMPL_ARGS;
-      result = build_over_call (cand, flags, complain);
+      result = build_over_call (cand, flags, complain, input_location);
     }
 
   /* Free all the conversions we allocated.  */
@@ -3999,7 +4001,8 @@ build_operator_new_call (tree fnname, VEC(tree,gc) **args,
      *fn = cand->fn;
 
    /* Build the CALL_EXPR.  */
-   return build_over_call (cand, LOOKUP_NORMAL, tf_warning_or_error);
+   return build_over_call (cand, LOOKUP_NORMAL, tf_warning_or_error,
+			   input_location);
 }
 
 /* Build a new call to operator().  This may change ARGS.  */
@@ -4120,7 +4123,8 @@ build_op_call_1 (tree obj, VEC(tree,gc) **args, tsubst_flags_t complain)
 	 DECL_NAME here.  */
       else if (TREE_CODE (cand->fn) == FUNCTION_DECL
 	       && DECL_OVERLOADED_OPERATOR_P (cand->fn) == CALL_EXPR)
-	result = build_over_call (cand, LOOKUP_NORMAL, complain);
+	result = build_over_call (cand, LOOKUP_NORMAL, complain,
+				  input_location);
       else
 	{
 	  obj = convert_like_with_context (cand->convs[0], obj, cand->fn, -1,
@@ -5102,7 +5106,8 @@ build_new_op_1 (enum tree_code code, int flags, tree arg1, tree arg2, tree arg3,
 	  if (resolve_args (arglist, complain) == NULL)
 	    result = error_mark_node;
 	  else
-	    result = build_over_call (cand, LOOKUP_NORMAL, complain);
+	    result = build_over_call (cand, LOOKUP_NORMAL, complain,
+				      input_location);
 	}
       else
 	{
@@ -5691,7 +5696,7 @@ convert_like_real (conversion *convs, tree expr, tree fn, int argnum,
 	for (i = 0; i < cand->num_convs; ++i)
 	  cand->convs[i]->user_conv_p = true;
 
-	expr = build_over_call (cand, LOOKUP_NORMAL, complain);
+	expr = build_over_call (cand, LOOKUP_NORMAL, complain, input_location);
 
 	/* If this is a constructor or a function returning an aggr type,
 	   we need to build up a TARGET_EXPR.  */
@@ -6292,7 +6297,8 @@ magic_varargs_p (tree fn)
    bitmask of various LOOKUP_* flags which apply to the call itself.  */
 
 static tree
-build_over_call (struct z_candidate *cand, int flags, tsubst_flags_t complain)
+build_over_call (struct z_candidate *cand, int flags, tsubst_flags_t complain,
+		 location_t loc)
 {
   tree fn = cand->fn;
   const VEC(tree,gc) *args = cand->args;
@@ -6756,6 +6762,10 @@ build_over_call (struct z_candidate *cand, int flags, tsubst_flags_t complain)
       if (TREE_SIDE_EFFECTS (argarray[0]))
 	argarray[0] = save_expr (argarray[0]);
       t = build_pointer_type (TREE_TYPE (fn));
+
+      /* generate dispatching call xref.  */
+      generate_reference (fn, loc, 'R');
+
       if (DECL_CONTEXT (fn) && TYPE_JAVA_INTERFACE (DECL_CONTEXT (fn)))
 	fn = build_java_interface_fn_ref (fn, argarray[0]);
       else
@@ -7007,7 +7017,7 @@ build_special_member_call (tree instance, tree name, VEC(tree,gc) **args,
   ret = build_new_method_call (instance, fns, args,
 			       TYPE_BINFO (BINFO_TYPE (binfo)),
 			       flags, /*fn=*/NULL,
-			       complain);
+			       complain, input_location);
 
   if (allocated != NULL)
     release_tree_vector (allocated);
@@ -7062,12 +7072,12 @@ name_as_c_string (tree name, tree type, bool *free_p)
 
 /* Build a call to "INSTANCE.FN (ARGS)".  If FN_P is non-NULL, it will
    be set, upon return, to the function called.  ARGS may be NULL.
-   This may change ARGS.  */
+   This may change ARGS.  LOC is the source location of the call.  */
 
 static tree
 build_new_method_call_1 (tree instance, tree fns, VEC(tree,gc) **args,
 		         tree conversion_path, int flags,
-		         tree *fn_p, tsubst_flags_t complain)
+		         tree *fn_p, tsubst_flags_t complain, location_t loc)
 {
   struct z_candidate *candidates = 0, *cand;
   tree explicit_targs = NULL_TREE;
@@ -7348,7 +7358,7 @@ build_new_method_call_1 (tree instance, tree fns, VEC(tree,gc) **args,
 	      if (fn_p)
 		*fn_p = fn;
 	      /* Build the actual CALL_EXPR.  */
-	      call = build_over_call (cand, flags, complain);
+	      call = build_over_call (cand, flags, complain, loc);
 	      /* In an expression of the form `a->f()' where `f' turns
 		 out to be a static member function, `a' is
 		 none-the-less evaluated.  */
@@ -7412,12 +7422,12 @@ build_new_method_call_1 (tree instance, tree fns, VEC(tree,gc) **args,
 tree
 build_new_method_call (tree instance, tree fns, VEC(tree,gc) **args,
 		       tree conversion_path, int flags,
-		       tree *fn_p, tsubst_flags_t complain)
+		       tree *fn_p, tsubst_flags_t complain, location_t loc)
 {
   tree ret;
   bool subtime = timevar_cond_start (TV_OVERLOAD);
   ret = build_new_method_call_1 (instance, fns, args, conversion_path, flags,
-                                 fn_p, complain);
+                                 fn_p, complain, loc);
   timevar_cond_stop (TV_OVERLOAD, subtime);
   return ret;
 }
@@ -8428,6 +8438,7 @@ can_convert_arg_bad (tree to, tree from, tree arg, int flags)
 tree
 perform_implicit_conversion_flags (tree type, tree expr, tsubst_flags_t complain, int flags)
 {
+  tree result = expr;
   conversion *conv;
   void *p;
 
@@ -8470,6 +8481,9 @@ perform_implicit_conversion_flags (tree type, tree expr, tsubst_flags_t complain
     }
   else
     expr = convert_like (conv, expr, complain);
+  
+  if (expr != error_mark_node)
+    duplicate_expr_locations (expr, result);
 
   /* Free all the conversions we allocated.  */
   obstack_free (&conversion_obstack, p);

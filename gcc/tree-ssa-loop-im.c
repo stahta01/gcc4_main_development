@@ -302,6 +302,7 @@ for_each_index (tree *addr_p, bool (*cbck) (tree, tree *, void *), void *data)
 
 	case VAR_DECL:
 	case PARM_DECL:
+	case CONST_DECL:
 	case STRING_CST:
 	case RESULT_DECL:
 	case VECTOR_CST:
@@ -1329,6 +1330,8 @@ move_computations_stmt (struct dom_walk_data *dw_data,
 
       mark_virtual_ops_for_renaming (stmt);
       gsi_insert_on_edge (loop_preheader_edge (level), stmt);
+      gimple_set_location (stmt, UNKNOWN_LOCATION);
+      gimple_set_block (stmt, NULL_TREE);
       gsi_remove (&bsi, false);
     }
 }

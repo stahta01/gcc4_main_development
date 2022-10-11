@@ -336,6 +336,6 @@ rs6000_handle_option (struct gcc_options *opts, struct gcc_options *opts_set,
 
 #undef TARGET_DEFAULT_TARGET_FLAGS
 #define TARGET_DEFAULT_TARGET_FLAGS \
-  (TARGET_DEFAULT)
+  (TARGET_DEFAULT | SUBTARGET_DEFAULT)
 
 struct gcc_targetm_common targetm_common = TARGETM_COMMON_INITIALIZER;

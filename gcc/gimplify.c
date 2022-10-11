@@ -46,6 +46,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "vec.h"
 #include "gimple.h"
 #include "tree-pass.h"
+#include "cscos.h"
 
 #include "langhooks-def.h"	/* FIXME: for lhd_set_decl_assembler_name.  */
 #include "expr.h"		/* FIXME: for can_move_by_pieces
@@ -1175,6 +1176,7 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
   gimple gimple_bind;
   gimple_seq body, cleanup;
   gimple stack_save;
+  location_t end_locus = 0;
 
   tree temp = voidify_wrapper_expr (bind_expr, NULL);
 
@@ -1220,6 +1222,11 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
   gimplify_stmt (&BIND_EXPR_BODY (bind_expr), &body);
   gimple_bind_set_body (gimple_bind, body);
 
+  /* Source location wise, the cleanup code (stack_restore and clobbers)
+     belongs to the end of the block, so propagate what we have.  */
+  if (BIND_EXPR_BLOCK (bind_expr))
+    end_locus = BLOCK_SOURCE_END_LOCATION (BIND_EXPR_BLOCK (bind_expr));
+
   cleanup = NULL;
   stack_save = NULL;
   if (gimplify_ctxp->save_stack)
@@ -1230,7 +1237,7 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
 	 block to achieve this.  Note that mudflap depends on the
 	 format of the emitted code: see mx_register_decls().  */
       build_stack_save_restore (&stack_save, &stack_restore);
-
+      annotate_one_with_location (stack_restore, end_locus);
       gimplify_seq_add_stmt (&cleanup, stack_restore);
     }
 
@@ -1248,8 +1255,11 @@ gimplify_bind_expr (tree *expr_p, gimple_seq *pre_p)
 	  && !is_gimple_reg (t))
 	{
 	  tree clobber = build_constructor (TREE_TYPE (t), NULL);
+	  gimple clobber_stmt;
 	  TREE_THIS_VOLATILE (clobber) = 1;
-	  gimplify_seq_add_stmt (&cleanup, gimple_build_assign (t, clobber));
+	  clobber_stmt = gimple_build_assign (t, clobber);
+	  annotate_one_with_location (clobber_stmt, end_locus);
+	  gimplify_seq_add_stmt (&cleanup, clobber_stmt);
 	}
     }
 
@@ -1417,6 +1427,9 @@ gimplify_vla_decl (tree decl, gimple_seq *seq_p)
   /* Indicate that we need to restore the stack level when the
      enclosing BIND_EXPR is exited.  */
   gimplify_ctxp->save_stack = true;
+
+  if (flag_callgraph_info & CALLGRAPH_INFO_DYNAMIC_ALLOC)
+    cgraph_final_record_dynamic_alloc (current_function_decl, decl);
 }
 
 /* Gimplify a DECL_EXPR node *STMT_P by making any necessary allocation
@@ -1919,9 +1932,6 @@ gimplify_conversion (tree *expr_p)
   return GS_OK;
 }
 
-/* Nonlocal VLAs seen in the current function.  */
-static struct pointer_set_t *nonlocal_vlas;
-
 /* Gimplify a VAR_DECL or PARM_DECL.  Return GS_OK if we expanded a
    DECL_VALUE_EXPR, and it's worth re-examining things.  */
 
@@ -1952,40 +1962,64 @@ gimplify_var_or_parm_decl (tree *expr_p)
   /* If the decl is an alias for another expression, substitute it now.  */
   if (DECL_HAS_VALUE_EXPR_P (decl))
     {
-      tree value_expr = DECL_VALUE_EXPR (decl);
-
-      /* For referenced nonlocal VLAs add a decl for debugging purposes
-	 to the current function.  */
-      if (TREE_CODE (decl) == VAR_DECL
-	  && TREE_CODE (DECL_SIZE_UNIT (decl)) != INTEGER_CST
-	  && nonlocal_vlas != NULL
-	  && TREE_CODE (value_expr) == INDIRECT_REF
-	  && TREE_CODE (TREE_OPERAND (value_expr, 0)) == VAR_DECL
-	  && decl_function_context (decl) != current_function_decl)
-	{
-	  struct gimplify_omp_ctx *ctx = gimplify_omp_ctxp;
-	  while (ctx && ctx->region_type == ORT_WORKSHARE)
-	    ctx = ctx->outer_context;
-	  if (!ctx && !pointer_set_insert (nonlocal_vlas, decl))
-	    {
-	      tree copy = copy_node (decl), block;
-
-	      lang_hooks.dup_lang_specific_decl (copy);
-	      SET_DECL_RTL (copy, 0);
-	      TREE_USED (copy) = 1;
-	      block = DECL_INITIAL (current_function_decl);
-	      DECL_CHAIN (copy) = BLOCK_VARS (block);
-	      BLOCK_VARS (block) = copy;
-	      SET_DECL_VALUE_EXPR (copy, unshare_expr (value_expr));
-	      DECL_HAS_VALUE_EXPR_P (copy) = 1;
-	    }
-	}
-
-      *expr_p = unshare_expr (value_expr);
+      *expr_p = unshare_expr (DECL_VALUE_EXPR (decl));
       return GS_OK;
     }
 
   return GS_ALL_DONE;
+}
+
+/* Recalculate the value of the TREE_SIDE_EFFECTS flag for T.  */
+
+static void
+recalculate_side_effects (tree t)
+{
+  enum tree_code code = TREE_CODE (t);
+  int len = TREE_OPERAND_LENGTH (t);
+  int i;
+
+  switch (TREE_CODE_CLASS (code))
+    {
+    case tcc_expression:
+      switch (code)
+	{
+	case INIT_EXPR:
+	case MODIFY_EXPR:
+	case VA_ARG_EXPR:
+	case PREDECREMENT_EXPR:
+	case PREINCREMENT_EXPR:
+	case POSTDECREMENT_EXPR:
+	case POSTINCREMENT_EXPR:
+	  /* All of these have side-effects, no matter what their
+	     operands are.  */
+	  return;
+
+	default:
+	  break;
+	}
+      /* Fall through.  */
+
+    case tcc_comparison:  /* a comparison expression */
+    case tcc_unary:       /* a unary arithmetic expression */
+    case tcc_binary:      /* a binary arithmetic expression */
+    case tcc_reference:   /* a reference */
+    case tcc_vl_exp:        /* a function call */
+      TREE_SIDE_EFFECTS (t) = TREE_THIS_VOLATILE (t);
+      for (i = 0; i < len; ++i)
+	{
+	  tree op = TREE_OPERAND (t, i);
+	  if (op && TREE_SIDE_EFFECTS (op))
+	    TREE_SIDE_EFFECTS (t) = 1;
+	}
+      break;
+
+    case tcc_constant:
+      /* No side-effects.  */
+      return;
+
+    default:
+      gcc_unreachable ();
+   }
 }
 
 /* Gimplify the COMPONENT_REF, ARRAY_REF, REALPART_EXPR or IMAGPART_EXPR
@@ -2592,6 +2626,20 @@ gimplify_call_expr (tree *expr_p, gimple_seq *pre_p, bool want_value)
   return ret;
 }
 
+/* Return the location to be used for T during gimplification.
+
+   ??? This is a kludge to accommodate the Ada compiler.  It expects
+   conditional branches to have the location of the predicate while
+   they naturally have the location of the conditional expression.  */
+
+static inline location_t
+adjusted_expr_location (tree t)
+{
+  if (TREE_CODE (t) == COND_EXPR && EXPR_HAS_LOCATION (COND_EXPR_COND (t)))
+    t = COND_EXPR_COND (t);
+  return EXPR_LOCATION (t);
+}
+
 /* Handle shortcut semantics in the predicate operand of a COND_EXPR by
    rewriting it into multiple COND_EXPRs, and possibly GOTO_EXPRs.
 
@@ -2860,7 +2908,7 @@ shortcut_cond_expr (tree expr)
 	  tree last = expr_last (expr);
 	  t = build_and_jump (&end_label);
 	  if (EXPR_HAS_LOCATION (last))
-	    SET_EXPR_LOCATION (t, EXPR_LOCATION (last));
+	    SET_EXPR_LOCATION (t, adjusted_expr_location (last));
 	  append_to_statement_list (t, &expr);
 	}
       if (emit_false)
@@ -3100,6 +3148,7 @@ gimplify_cond_expr (tree *expr_p, gimple_seq *pre_p, fallback_t fallback)
   STRIP_TYPE_NOPS (TREE_OPERAND (expr, 0));
   if (TREE_CODE (TREE_OPERAND (expr, 0)) == COMPOUND_EXPR)
     gimplify_compound_expr (&TREE_OPERAND (expr, 0), pre_p, true);
+  loc = adjusted_expr_location (expr);
 
   /* Make sure the condition has BOOLEAN_TYPE.  */
   TREE_OPERAND (expr, 0) = gimple_boolify (TREE_OPERAND (expr, 0));
@@ -3181,6 +3230,7 @@ gimplify_cond_expr (tree *expr_p, gimple_seq *pre_p, fallback_t fallback)
 
   gimple_cond = gimple_build_cond (pred_code, arm1, arm2, label_true,
                                    label_false);
+  gimple_set_location (gimple_cond, loc);
 
   gimplify_seq_add_stmt (&seq, gimple_cond);
   label_cont = NULL_TREE;
@@ -3868,7 +3918,7 @@ gimplify_init_constructor (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	     objects.  Initializers for such objects must explicitly set
 	     every field that needs to be set.  */
 	  cleared = false;
-	else if (!complete_p)
+	else if (!complete_p && !CONSTRUCTOR_NOCLEAR (ctor))
 	  /* If the constructor isn't complete, clear the whole object
 	     beforehand.
 
@@ -3920,9 +3970,13 @@ gimplify_init_constructor (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	    else
 	      align = TYPE_ALIGN (type);
 
+	    /* Do a block move either if the size is so small as to make
+	       each individual move a sub-unit move on average, or if it
+	       is so large as to make individual moves inefficient.  */
 	    if (size > 0
 		&& num_nonzero_elements > 1
-		&& !can_move_by_pieces (size, align))
+		&& (size < num_nonzero_elements
+		    || !can_move_by_pieces (size, align)))
 	      {
 		if (notify_temp_creation)
 		  return GS_ERROR;
@@ -5213,11 +5267,21 @@ gimplify_asm_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
       VEC_safe_push (tree, gc, inputs, link);
     }
 
-  for (link = ASM_CLOBBERS (expr); link; ++i, link = TREE_CHAIN (link))
-    VEC_safe_push (tree, gc, clobbers, link);
+  link_next = NULL_TREE;
+  for (link = ASM_CLOBBERS (expr); link; ++i, link = link_next)
+    {
+      link_next = TREE_CHAIN (link);
+      TREE_CHAIN (link) = NULL_TREE;
+      VEC_safe_push (tree, gc, clobbers, link);
+    }
 
-  for (link = ASM_LABELS (expr); link; ++i, link = TREE_CHAIN (link))
-    VEC_safe_push (tree, gc, labels, link);
+  link_next = NULL_TREE;
+  for (link = ASM_LABELS (expr); link; ++i, link = link_next)
+    {
+      link_next = TREE_CHAIN (link);
+      TREE_CHAIN (link) = NULL_TREE;
+      VEC_safe_push (tree, gc, labels, link);
+    }
 
   /* Do not add ASMs with errors to the gimple IL stream.  */
   if (ret != GS_ERROR)
@@ -6852,9 +6916,8 @@ gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
   post_last_gsi = gsi_last (*post_p);
 
   saved_location = input_location;
-  if (save_expr != error_mark_node
-      && EXPR_HAS_LOCATION (*expr_p))
-    input_location = EXPR_LOCATION (*expr_p);
+  if (save_expr != error_mark_node && EXPR_HAS_LOCATION (save_expr))
+    input_location = adjusted_expr_location (save_expr);
 
   /* Loop over the specific gimplifiers until the toplevel node
      remains the same.  */
@@ -7078,6 +7141,8 @@ gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 			     TREE_OPERAND (*expr_p, 1));
 	  if (tmp)
 	    {
+	      REF_REVERSE_STORAGE_ORDER (tmp)
+	        = REF_REVERSE_STORAGE_ORDER (*expr_p);
 	      *expr_p = tmp;
 	      recalculate_side_effects (*expr_p);
 	      ret = GS_OK;
@@ -7144,18 +7209,26 @@ gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	  break;
 
 	case GOTO_EXPR:
-	  /* If the target is not LABEL, then it is a computed jump
-	     and the target needs to be gimplified.  */
-	  if (TREE_CODE (GOTO_DESTINATION (*expr_p)) != LABEL_DECL)
-	    {
-	      ret = gimplify_expr (&GOTO_DESTINATION (*expr_p), pre_p,
-				   NULL, is_gimple_val, fb_rvalue);
-	      if (ret == GS_ERROR)
-		break;
-	    }
-	  gimplify_seq_add_stmt (pre_p,
-			  gimple_build_goto (GOTO_DESTINATION (*expr_p)));
-	  ret = GS_ALL_DONE;
+	  {
+	    gimple s;
+
+	    /* If the target is not LABEL, then it is a computed jump
+	       and the target needs to be gimplified.  */
+	    if (TREE_CODE (GOTO_DESTINATION (*expr_p)) != LABEL_DECL)
+	      {
+		ret = gimplify_expr (&GOTO_DESTINATION (*expr_p), pre_p,
+				     NULL, is_gimple_val, fb_rvalue);
+		if (ret == GS_ERROR)
+		  break;
+	      }
+	    s = gimple_build_goto (GOTO_DESTINATION (*expr_p));
+	    gimple_goto_set_loop_no_unroll (s, GOTO_LOOP_NO_UNROLL (*expr_p));
+	    gimple_goto_set_loop_unroll (s, GOTO_LOOP_UNROLL (*expr_p));
+	    gimple_goto_set_loop_no_vector (s, GOTO_LOOP_NO_VECTOR (*expr_p));
+	    gimple_goto_set_loop_vector (s, GOTO_LOOP_VECTOR (*expr_p));
+	    gimplify_seq_add_stmt (pre_p, s);
+	    ret = GS_ALL_DONE;
+	  }
 	  break;
 
 	case PREDICT_EXPR:
@@ -7988,7 +8061,6 @@ gimplify_body (tree fndecl, bool do_parms)
   gimple_seq parm_stmts, seq;
   gimple outer_bind;
   struct gimplify_ctx gctx;
-  struct cgraph_node *cgn;
 
   timevar_push (TV_TREE_GIMPLIFY);
 
@@ -8006,16 +8078,16 @@ gimplify_body (tree fndecl, bool do_parms)
   unshare_body (fndecl);
   unvisit_body (fndecl);
 
-  cgn = cgraph_get_node (fndecl);
-  if (cgn && cgn->origin)
-    nonlocal_vlas = pointer_set_create ();
-
   /* Make sure input_location isn't set to something weird.  */
   input_location = DECL_SOURCE_LOCATION (fndecl);
 
   /* Resolve callee-copies.  This has to be done before processing
      the body so that DECL_VALUE_EXPR gets processed correctly.  */
   parm_stmts = do_parms ? gimplify_parameters () : NULL;
+
+  /* Dump Source Coverage Obligations if we're queried so.  */
+  if (flag_dump_scos)
+    generate_scos (DECL_SAVED_TREE (fndecl));
 
   /* Gimplify the function's body.  */
   seq = NULL;
@@ -8053,12 +8125,6 @@ gimplify_body (tree fndecl, bool do_parms)
 	    DECL_HAS_VALUE_EXPR_P (parm) = 0;
 	    DECL_IGNORED_P (parm) = 0;
 	  }
-    }
-
-  if (nonlocal_vlas)
-    {
-      pointer_set_destroy (nonlocal_vlas);
-      nonlocal_vlas = NULL;
     }
 
   pop_gimplify_context (outer_bind);

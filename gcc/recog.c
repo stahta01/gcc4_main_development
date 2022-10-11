@@ -1944,7 +1944,7 @@ offsettable_address_addr_space_p (int strictp, enum machine_mode mode, rtx y,
   /* Adjusting an offsettable address involves changing to a narrower mode.
      Make sure that's OK.  */
 
-  if (mode_dependent_address_p (y))
+  if (!targetm.may_narrow_access_to (y, mode))
     return 0;
 
   /* ??? How much offset does an offsettable BLKmode reference need?
@@ -2012,6 +2012,26 @@ mode_dependent_address_p (rtx addr)
     return true;
 
   return targetm.mode_dependent_address_p (addr);
+}
+
+/* Whether access memory at address ADDR with mode TO remains valid, knowing
+   that accessing with mode FROM is.  FROM might be VOIDmode, in which case
+   we don't know the original access mode, just checking whether changing to
+   mode TO would invalidate.  */
+
+bool
+valid_access_mode_change_p (rtx addr,
+                           enum machine_mode from,
+                           enum machine_mode to)
+{
+  /* Check if we may_narrow_access_to ADDR when we're entitled to use that
+     predicate.  Fallback to more general mode dependence check otherwise.  */
+  
+  if (INTEGRAL_MODE_P (from) && INTEGRAL_MODE_P (to)
+      && GET_MODE_BITSIZE (to) < GET_MODE_BITSIZE (from))
+    return targetm.may_narrow_access_to (addr, from);
+  else
+    return !mode_dependent_address_p (addr);
 }
 
 /* Like extract_insn, but save insn extracted and don't extract again, when

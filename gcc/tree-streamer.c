@@ -281,8 +281,9 @@ record_common_node (struct streamer_tree_cache_d *cache, tree node)
       /* The FIELD_DECLs of structures should be shared, so that every
 	 COMPONENT_REF uses the same tree node when referencing a field.
 	 Pointer equality between FIELD_DECLs is used by the alias
-	 machinery to compute overlapping memory references (See
-	 nonoverlapping_component_refs_p).  */
+	 machinery to compute overlapping memory references (see
+	 nonoverlapping_component_refs_p and
+	 nonoverlapping_component_refs_of_decl_p).  */
       tree f;
       for (f = TYPE_FIELDS (node); f; f = TREE_CHAIN (f))
 	record_common_node (cache, f);

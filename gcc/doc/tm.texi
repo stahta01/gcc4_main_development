@@ -1268,9 +1268,9 @@ these accesses should use the bitfield container type.
 The default is @code{!TARGET_STRICT_ALIGN}.
 @end deftypefn
 
-@defmac MEMBER_TYPE_FORCES_BLK (@var{field}, @var{mode})
-Return 1 if a structure or array containing @var{field} should be accessed using
-@code{BLKMODE}.
+@deftypefn {Target Hook} bool TARGET_MEMBER_TYPE_FORCES_BLK (const_tree @var{field}, enum machine_mode @var{mode})
+Return true if a structure, union or array containing @var{field} should
+be accessed using @code{BLKMODE}.
 
 If @var{field} is the only field in the structure, @var{mode} is its
 mode, otherwise @var{mode} is VOIDmode.  @var{mode} is provided in the
@@ -1278,13 +1278,12 @@ case where structures of one field would require the structure's mode to
 retain the field's mode.
 
 Normally, this is not needed.
-@end defmac
+@end deftypefn
 
 @defmac ROUND_TYPE_ALIGN (@var{type}, @var{computed}, @var{specified})
-Define this macro as an expression for the alignment of a type (given
-by @var{type} as a tree node) if the alignment computed in the usual
-way is @var{computed} and the alignment explicitly specified was
-@var{specified}.
+Define this macro as an expression for the alignment of a non-packed type
+(given by @var{type} as a tree node) if the alignment computed in the usual
+way is @var{computed} and the one explicitly specified was @var{specified}.
 
 The default is to use @var{specified} if it is larger; otherwise, use
 the smaller of @var{computed} and @code{BIGGEST_ALIGNMENT}
@@ -5268,6 +5267,18 @@ global.  Then trampolines can use that label to jump directly to your
 special assembler code.
 @end defmac
 
+@defmac USE_RUNTIME_DESCRIPTORS
+Define this macro to 1 if the target will benefit from the use of runtime
+descriptors instead of trampolines.  Such descriptors are created at run
+time on the stack and made up of data only, but the generated code must be
+prepared to deal with them.  Define this macro to 0 if the target already
+uses descriptors for its standard calling sequence, which very likely means
+that trampolines need not reside on the stack.
+
+The macro should be defined to 1 for targets whose trampolines reside on
+the stack, thus requiring it to be made executable.
+@end defmac
+
 @node Library Calls
 @section Implicit Calls to Library Routines
 @cindex library subroutine names
@@ -5628,6 +5639,13 @@ You may assume that @var{addr} is a valid address for the machine.
 These are obsolete macros, replaced by the
 @code{TARGET_MODE_DEPENDENT_ADDRESS_P} target hook.
 @end defmac
+
+@deftypefn {Target Hook} bool TARGET_MAY_NARROW_ACCESS_TO (rtx @var{addr}, enum machine_mode @var{mode})
+A function that returns whether @var{addr}, a legitimate address
+expression for @var{mode}, may be accessed using a narrower mode for the
+purpose of an "offsettable" reference, mode class preserving. The default
+behavior is to invoke mode_dependent_address_p.
+@end deftypefn
 
 @deftypefn {Target Hook} bool TARGET_LEGITIMATE_CONSTANT_P (enum machine_mode @var{mode}, rtx @var{x})
 This hook returns true if @var{x} is a legitimate constant for a
@@ -9478,6 +9496,14 @@ is disabled in order to always output DWARF 2 frame information.
 A target may return @code{UI_TARGET} if it has ABI specified unwind tables.
 This will suppress generation of the normal debug frame unwind information.
 @end deftypefn
+
+@defmac DWARF2_LOCATION_LISTS_SUPPORT_MISSING_ON_TARGET
+Define this macro to evaluate to a nonzero value if GCC should refrain
+from generating location lists in DWARF2 debug information, for instance
+if your target is stuck with an old version of GDB that is unable to
+process them properly. This automatically disables variable tracking, with
+a warning if it has been requested explicitly.
+@end defmac
 
 @defmac DWARF2_ASM_LINE_DEBUG_INFO
 Define this macro to be a nonzero value if the assembler can generate Dwarf 2

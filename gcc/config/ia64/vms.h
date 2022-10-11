@@ -58,6 +58,9 @@ do {                                          \
   fprintf (FILE, ")");                        \
 } while (0)
 
+/* Generate VMS-style traceback info.  */
+#define DWARF2_VMS_TRACEBACK 1
+
 #undef STARTFILE_SPEC
 #define STARTFILE_SPEC \
 "%{!shared:%{mvms-return-codes:vcrt0.o%s} %{!mvms-return-codes:pcrt0.o%s} \
@@ -118,6 +121,15 @@ STATIC func_ptr __CTOR_LIST__[1]                                             \
 #define SUBTARGET_OPTIMIZATION_OPTIONS			\
   { OPT_LEVELS_ALL, OPT_fmerge_constants, NULL, 0 }
 
+/* Default to strict dwarf to prevent potential difficulties observed with
+   non-gdb debuggers on extensions.  */
+#undef SUBTARGET_OVERRIDE_OPTIONS
+#define SUBTARGET_OVERRIDE_OPTIONS	\
+do {					\
+  if (dwarf_strict < 0)			\
+    dwarf_strict = 1;			\
+} while (0)
+
 /* Define this to be nonzero if static stack checking is supported.  */
 #define STACK_CHECK_STATIC_BUILTIN 1
 
@@ -132,9 +144,6 @@ STATIC func_ptr __CTOR_LIST__[1]                                             \
 
 #undef TARGET_VALID_POINTER_MODE
 #define TARGET_VALID_POINTER_MODE ia64_vms_valid_pointer_mode
-
-#undef TARGET_ASM_NAMED_SECTION
-#define TARGET_ASM_NAMED_SECTION ia64_vms_elf_asm_named_section
 
 /* Define this macro if it is advisable to hold scalars in registers
    in a wider mode than that declared by the program.  In such cases,

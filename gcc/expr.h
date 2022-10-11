@@ -233,6 +233,10 @@ void expand_atomic_signal_fence (enum memmodel);
    May emit insns.  */
 extern rtx negate_rtx (enum machine_mode, rtx);
 
+/* Arguments MODE, RTX: return an rtx for the flipping of that value.
+   May emit insns.  */
+extern rtx flip_storage_order (enum machine_mode, rtx);
+
 /* Expand a logical AND operation.  */
 extern rtx expand_and (enum machine_mode, rtx, rtx, rtx);
 
@@ -288,6 +292,7 @@ enum block_op_methods
   BLOCK_OP_TAILCALL
 };
 
+extern GTY(()) tree block_move_fn;
 extern GTY(()) tree block_clear_fn;
 extern void init_block_move_fn (const char *);
 extern void init_block_clear_fn (const char *);
@@ -417,7 +422,7 @@ extern void expand_assignment (tree, tree, bool);
    and storing the value into TARGET.
    If SUGGEST_REG is nonzero, copy the value through a register
    and return that register, if that is possible.  */
-extern rtx store_expr (tree, rtx, int, bool);
+extern rtx store_expr (tree, rtx, int, bool, bool);
 
 /* Given an rtx that may include add and multiply operations,
    generate them as insns and return a pseudo-reg containing the value.
@@ -468,16 +473,11 @@ extern tree string_constant (tree, tree *);
 
 /* Generate code to evaluate EXP and jump to LABEL if the value is zero.  */
 extern void jumpifnot (tree, rtx, int);
-extern void jumpifnot_1 (enum tree_code, tree, tree, rtx, int);
+extern void jumpifnot_1 (enum tree_code, tree, tree, rtx, int, location_t);
 
 /* Generate code to evaluate EXP and jump to LABEL if the value is nonzero.  */
 extern void jumpif (tree, rtx, int);
-extern void jumpif_1 (enum tree_code, tree, tree, rtx, int);
-
-/* Generate code to evaluate EXP and jump to IF_FALSE_LABEL if
-   the result is zero, or IF_TRUE_LABEL if the result is one.  */
-extern void do_jump (tree, rtx, rtx, int);
-extern void do_jump_1 (enum tree_code, tree, tree, rtx, rtx, int);
+extern void jumpif_1 (enum tree_code, tree, tree, rtx, int, location_t);
 
 extern void do_compare_rtx_and_jump (rtx, rtx, enum rtx_code, int,
 				     enum machine_mode, rtx, rtx, rtx, int);
@@ -691,10 +691,10 @@ extern void store_bit_field (rtx, unsigned HOST_WIDE_INT,
 			     unsigned HOST_WIDE_INT,
 			     unsigned HOST_WIDE_INT,
 			     unsigned HOST_WIDE_INT,
-			     enum machine_mode, rtx);
+			     enum machine_mode, rtx, bool);
 extern rtx extract_bit_field (rtx, unsigned HOST_WIDE_INT,
 			      unsigned HOST_WIDE_INT, int, bool, rtx,
-			      enum machine_mode, enum machine_mode);
+			      enum machine_mode, enum machine_mode, bool);
 extern rtx extract_low_bits (enum machine_mode, enum machine_mode, rtx);
 extern rtx expand_mult (enum machine_mode, rtx, rtx, rtx, int);
 extern rtx expand_mult_highpart_adjust (enum machine_mode, rtx, rtx, rtx, rtx, int);

@@ -146,6 +146,34 @@ struct GTY(()) cgraph_clone_info
 };
 
 
+/* Information about the function that is computed by various parts of
+   the compiler.  Available only for functions that have been already
+   assembled and if -fcallgraph-info was specified.  */
+
+struct GTY((chain_next ("%h.next"))) cgraph_final_edge
+{
+  location_t location;
+  struct cgraph_node *caller;
+  struct cgraph_node *callee;
+  struct cgraph_final_edge *next;
+};
+
+struct GTY((chain_next ("%h.next"))) cgraph_dynamic_alloc
+{
+  location_t location;
+  const char *name;
+  struct cgraph_dynamic_alloc *next;
+};
+
+struct GTY(()) cgraph_final_info
+{
+  struct cgraph_final_edge *calls;
+  int stack_usage_kind;
+  HOST_WIDE_INT stack_usage;
+  struct cgraph_dynamic_alloc *dynamic_allocs;
+  bool called;
+};
+
 /* The cgraph data structure.
    Each function decl has assigned cgraph_node listing callees and callers.  */
 
@@ -192,6 +220,8 @@ struct GTY((chain_next ("%h.next"), chain_prev ("%h.previous"))) cgraph_node {
   struct cgraph_rtl_info rtl;
   struct cgraph_clone_info clone;
   struct cgraph_thunk_info thunk;
+
+  struct cgraph_final_info *final;
 
   /* Expected number of executions: calculated in profile.c.  */
   gcov_type count;
@@ -474,6 +504,7 @@ void dump_cgraph (FILE *);
 void debug_cgraph (void);
 void dump_cgraph_node (FILE *, struct cgraph_node *);
 void debug_cgraph_node (struct cgraph_node *);
+void dump_cgraph_final_vcg (FILE *);
 void cgraph_insert_node_to_hashtable (struct cgraph_node *node);
 void cgraph_remove_edge (struct cgraph_edge *);
 void cgraph_remove_node (struct cgraph_node *);
@@ -502,9 +533,12 @@ void cgraph_create_edge_including_clones (struct cgraph_node *,
 					  gimple, gimple, gcov_type, int,
 					  cgraph_inline_failed_t);
 void cgraph_update_edges_for_call_stmt (gimple, tree, gimple);
+void cgraph_final_record_call (tree, tree, location_t);
+void cgraph_final_record_dynamic_alloc (tree, tree);
 struct cgraph_local_info *cgraph_local_info (tree);
 struct cgraph_global_info *cgraph_global_info (tree);
 struct cgraph_rtl_info *cgraph_rtl_info (tree);
+struct cgraph_final_info *cgraph_final_info (tree);
 const char * cgraph_node_name (struct cgraph_node *);
 struct cgraph_edge * cgraph_clone_edge (struct cgraph_edge *,
 					struct cgraph_node *, gimple,

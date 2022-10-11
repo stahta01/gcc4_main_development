@@ -404,6 +404,14 @@ struct GTY((variable_size)) rtvec_def {
    or floating point constant.  */
 #define CONST_DOUBLE_P(X) (GET_CODE (X) == CONST_DOUBLE)
 
+/* Predicate yielding true iff X is an rtx for a double-int.  */
+#define CONST_DOUBLE_AS_INT_P(X) \
+  (GET_CODE (X) == CONST_DOUBLE && GET_MODE (X) == VOIDmode)
+
+/* Predicate yielding true iff X is an rtx for a integer const.  */
+#define CONST_SCALAR_INT_P(X) \
+  (CONST_INT_P (X) || CONST_DOUBLE_AS_INT_P (X))
+
 /* Predicate yielding nonzero iff X is a label insn.  */
 #define LABEL_P(X) (GET_CODE (X) == CODE_LABEL)
 
@@ -1642,6 +1650,8 @@ extern int currently_expanding_to_rtl;
 extern int ceil_log2 (unsigned HOST_WIDE_INT);
 
 /* In explow.c */
+extern GTY(()) rtx stack_check_symbol;
+extern GTY(()) rtx stack_check_libfunc;
 extern HOST_WIDE_INT trunc_int_for_mode	(HOST_WIDE_INT, enum machine_mode);
 extern rtx plus_constant (rtx, HOST_WIDE_INT);
 
@@ -1804,11 +1814,16 @@ extern rtx next_cc0_user (rtx);
 extern rtx prev_cc0_setter (rtx);
 
 /* In cfglayout.c  */
+#define HAS_MULTI_LOCATION(I) (INSN_LOCATOR (I) < 0)
 extern int insn_line (const_rtx);
 extern const char * insn_file (const_rtx);
 extern location_t locator_location (int);
 extern int locator_line (int);
 extern const char * locator_file (int);
+extern expanded_location insn_location (const_rtx, int *, bool *);
+extern expanded_location insn_multi_location (const_rtx, unsigned int,
+					      int *, bool *);
+extern bool non_final_source_line (const_rtx);
 extern bool locator_eq (int, int);
 extern int prologue_locator, epilogue_locator;
 
@@ -2620,6 +2635,7 @@ extern bool expensive_function_p (int);
 
 /* In var-tracking.c */
 extern unsigned int variable_tracking_main (void);
+extern unsigned int variable_tracking_no_opt_main (void);
 
 /* In stor-layout.c.  */
 extern void get_mode_bounds (enum machine_mode, int, enum machine_mode,
@@ -2635,6 +2651,7 @@ extern void simplify_using_condition (rtx, rtx *, struct bitmap_head_def *);
 
 /* In final.c  */
 extern unsigned int compute_alignments (void);
+extern void update_alignments (VEC(rtx,heap) *);
 extern int asm_str_count (const char *templ);
 
 struct rtl_hooks
@@ -2667,6 +2684,8 @@ extern location_t get_curr_insn_source_location (void);
 extern void set_curr_insn_block (tree);
 extern tree get_curr_insn_block (void);
 extern int curr_insn_locator (void);
+extern void add_insn_locator (rtx, int);
+extern void set_insn_locators (rtx, int);
 extern bool optimize_insn_for_size_p (void);
 extern bool optimize_insn_for_speed_p (void);
 

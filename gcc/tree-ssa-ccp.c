@@ -187,10 +187,12 @@ dump_lattice_value (FILE *outf, const char *prefix, prop_value_t val)
       fprintf (outf, "%sVARYING", prefix);
       break;
     case CONSTANT:
-      fprintf (outf, "%sCONSTANT ", prefix);
       if (TREE_CODE (val.value) != INTEGER_CST
 	  || double_int_zero_p (val.mask))
-	print_generic_expr (outf, val.value, dump_flags);
+	{
+	  fprintf (outf, "%sCONSTANT ", prefix);
+	  print_generic_expr (outf, val.value, dump_flags);
+	}
       else
 	{
 	  double_int cval = double_int_and_not (tree_to_double_int (val.value),

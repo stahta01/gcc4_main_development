@@ -50,8 +50,19 @@ along with GCC; see the file COPYING3.  If not see
 
 #undef  CPP_SPEC
 #define CPP_SPEC VXWORKS_ADDITIONAL_CPP_SPEC
+
+/* For -mrtp !-shared which has -l:crt0.o, augment LIB_SPEC to include the
+   -L options designating the directories where crt0.o could be found.  */
 #undef  LIB_SPEC
-#define LIB_SPEC VXWORKS_LIB_SPEC
+#define LIB_SPEC VXWORKS_LIB_SPEC \
+ "%{mrtp:%{!shared: \
+    %{vxsim: \
+      -L%:getenv(WIND_BASE /target/usr/lib/simpentium/SIMPENTIUM/common) \
+      -L%:getenv(WIND_BASE /target/lib/usr/lib/simpentium/SIMPENTIUM/common)} \
+    %{!vxsim: \
+      -L%:getenv(WIND_BASE /target/usr/lib/pentium/PENTIUM/common) \
+      -L%:getenv(WIND_BASE /target/lib/usr/lib/pentium/PENTIUM/common)}}}"
+
 #undef  STARTFILE_SPEC
 #define STARTFILE_SPEC VXWORKS_STARTFILE_SPEC
 #undef  ENDFILE_SPEC
@@ -72,3 +83,14 @@ along with GCC; see the file COPYING3.  If not see
 /* We cannot use PC-relative accesses for VxWorks PIC because there is no
    fixed gap between segments.  */
 #undef ASM_PREFERRED_EH_DATA_FORMAT
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1
+
+/* This platform supports the probing method of stack checking (RTP mode)
+   and the ZCX mechanism. 8K is reserved in the stack to propagate
+   exceptions reliably in case of stack overflow. */
+#define STACK_CHECK_PROTECT 8192
+
+/* Support frame-pointer based unwinding.  */
+#define USE_IX86_FRAME_POINTER 1

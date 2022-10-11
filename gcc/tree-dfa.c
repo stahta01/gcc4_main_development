@@ -590,10 +590,13 @@ add_referenced_var (tree var)
       /* Scan DECL_INITIAL for pointer variables as they may contain
 	 address arithmetic referencing the address of other
 	 variables.  As we are only interested in directly referenced
-	 globals or referenced locals restrict this to initializers
-	 than can refer to local variables.  */
+	 globals or referenced locals, restrict this to initializers
+	 than can refer to local variables.  But we need to do it for
+	 initializers of global variables declared in parent functions
+	 lest these variables aren't referenced anywhere else.  */
       if (DECL_INITIAL (var)
-          && DECL_CONTEXT (var) == current_function_decl)
+	  && (DECL_CONTEXT (var) == current_function_decl
+	      || (!DECL_FILE_SCOPE_P (var) && is_global_var (var))))
       	walk_tree (&DECL_INITIAL (var), find_vars_r, NULL, 0);
 
       return true;
@@ -703,12 +706,14 @@ find_new_referenced_vars (gimple stmt)
    base variable.  The access range is delimited by bit positions *POFFSET and
    *POFFSET + *PMAX_SIZE.  The access size is *PSIZE bits.  If either
    *PSIZE or *PMAX_SIZE is -1, they could not be determined.  If *PSIZE
-   and *PMAX_SIZE are equal, the access is non-variable.  */
+   and *PMAX_SIZE are equal, the access is non-variable.  If *PREVERSE is
+   true, the storage order of the reference is reversed.  */
 
 tree
 get_ref_base_and_extent (tree exp, HOST_WIDE_INT *poffset,
 			 HOST_WIDE_INT *psize,
-			 HOST_WIDE_INT *pmax_size)
+			 HOST_WIDE_INT *pmax_size,
+			 bool *preverse)
 {
   HOST_WIDE_INT bitsize = -1;
   HOST_WIDE_INT maxsize = -1;
@@ -717,11 +722,23 @@ get_ref_base_and_extent (tree exp, HOST_WIDE_INT *poffset,
   HOST_WIDE_INT hbit_offset;
   bool seen_variable_array_ref = false;
 
-  /* First get the final access size from just the outermost expression.  */
+  /* First get the final access size and the storage order from just the
+     outermost expression.  */
   if (TREE_CODE (exp) == COMPONENT_REF)
-    size_tree = DECL_SIZE (TREE_OPERAND (exp, 1));
+    {
+      enum machine_mode mode = DECL_MODE (TREE_OPERAND (exp, 1));
+      size_tree = DECL_SIZE (TREE_OPERAND (exp, 1));
+      /* ??? The Fortran compiler references components of 'void' type.  */
+      *preverse
+	= !VOID_TYPE_P (TREE_TYPE (TREE_OPERAND (exp, 0)))
+	  && TYPE_REVERSE_STORAGE_ORDER (TREE_TYPE (TREE_OPERAND (exp, 0)))
+	  && mode != BLKmode;
+    }
   else if (TREE_CODE (exp) == BIT_FIELD_REF)
-    size_tree = TREE_OPERAND (exp, 1);
+    {
+      size_tree = TREE_OPERAND (exp, 1);
+      *preverse = REF_REVERSE_STORAGE_ORDER (exp);
+    }
   else if (!VOID_TYPE_P (TREE_TYPE (exp)))
     {
       enum machine_mode mode = TYPE_MODE (TREE_TYPE (exp));
@@ -729,7 +746,16 @@ get_ref_base_and_extent (tree exp, HOST_WIDE_INT *poffset,
 	size_tree = TYPE_SIZE (TREE_TYPE (exp));
       else
 	bitsize = GET_MODE_BITSIZE (mode);
+      *preverse
+	= (((TREE_CODE (exp) == ARRAY_REF
+	     || TREE_CODE (exp) == ARRAY_RANGE_REF)
+	    && TYPE_REVERSE_STORAGE_ORDER (TREE_TYPE (TREE_OPERAND (exp, 0))))
+	   || (TREE_CODE (exp) == MEM_REF
+	       && REF_REVERSE_STORAGE_ORDER (exp)))
+	  && mode != BLKmode;
     }
+  else
+    *preverse = false;
   if (size_tree != NULL_TREE)
     {
       if (! host_integerp (size_tree, 1))

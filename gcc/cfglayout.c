@@ -41,6 +41,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "df.h"
 #include "vecprim.h"
 #include "emit-rtl.h"
+#include "input.h"
+#include "bitmap.h"
 
 /* Holds the interesting trailing notes for the function.  */
 rtx cfg_layout_function_footer;
@@ -237,6 +239,16 @@ static VEC(location_t,heap) *locations_locators_vals;
 int prologue_locator;
 int epilogue_locator;
 
+/* Data structures implementing multi-location support.  When an INSN_LOCATOR
+   is negative, it represents an index in a level-1 varray MULTI_LOCATORS_LOCS
+   which contains indexes in a level-2 varray MULTI_LOCATORS_VALS.  This is
+   optimized for consecutive insertions of the multiple locations of an insn
+   but supports non-consecutive insertions as well, albeit inefficiently.  */
+static VEC(int,heap) *multi_locators_locs;
+static VEC(int,heap) *multi_locators_vals;
+DEF_VEC_O(expanded_location);
+DEF_VEC_ALLOC_O(expanded_location,heap);
+
 /* Hold current location information and last location information, so the
    datastructures are built lazily only when some instructions in given
    place are needed.  */
@@ -254,6 +266,12 @@ insn_locators_alloc (void)
   block_locators_blocks = VEC_alloc (tree, gc, 32);
   locations_locators_locs = VEC_alloc (int, heap, 32);
   locations_locators_vals = VEC_alloc (location_t, heap, 32);
+
+  if (flag_preserve_control_flow)
+   {
+     multi_locators_locs = VEC_alloc (int, heap, 32);
+     multi_locators_vals = VEC_alloc (int, heap, 32);
+   }
 
   curr_location = UNKNOWN_LOCATION;
   last_location = UNKNOWN_LOCATION;
@@ -281,8 +299,13 @@ insn_locators_free (void)
   VEC_free (tree,gc, block_locators_blocks);
   VEC_free (int, heap, locations_locators_locs);
   VEC_free (location_t, heap, locations_locators_vals);
-}
 
+ if (flag_preserve_control_flow)
+   {
+     VEC_free (int, heap, multi_locators_locs);
+     VEC_free (int, heap, multi_locators_vals);
+   }
+}
 
 /* Set current location.  */
 void
@@ -342,6 +365,71 @@ curr_insn_locator (void)
       last_location = curr_location;
     }
   return curr_rtl_loc;
+}
+
+/* Add LOC to the list of locators for INSN.  */
+void
+add_insn_locator (rtx insn, int loc)
+{
+  const int insn_loc = INSN_LOCATOR (insn);
+
+  gcc_assert (loc > 0);
+
+  /* If the insn has no locator yet, just set it.  */
+  if (insn_loc == 0)
+    {
+      INSN_LOCATOR (insn) = loc;
+      return;
+    }
+
+  /* Otherwise, if it has only one, push a new multi-locator.  */
+  if (insn_loc > 0)
+    {
+      if (loc == insn_loc)
+	return;
+
+      INSN_LOCATOR (insn) = - (VEC_length (int, multi_locators_locs) + 1);
+      VEC_safe_push (int, heap, multi_locators_locs,
+		     VEC_length (int, multi_locators_vals));
+      VEC_safe_push (int, heap, multi_locators_vals, 2);
+      VEC_safe_push (int, heap, multi_locators_vals, insn_loc);
+    }
+
+  /* Otherwise, it has more than one, there are two cases: either it is the
+     latest pushed multi-locator and we can just push the new value, or it
+     isn't and we need to copy it to the end before pushing.  */
+  else
+    {
+      int index = VEC_index (int, multi_locators_locs, - (insn_loc + 1));
+      int n = VEC_index (int, multi_locators_vals, index);
+      if (index + 1 + n == (int) VEC_length (int, multi_locators_vals))
+	VEC_replace (int, multi_locators_vals, index, n + 1);
+      else
+	{
+	  INSN_LOCATOR (insn) = - (VEC_length (int, multi_locators_locs) + 1);
+	  VEC_safe_push (int, heap, multi_locators_locs,
+			      VEC_length (int, multi_locators_vals));
+	  VEC_safe_push (int, heap, multi_locators_vals, n + 1);
+	  while (n-- > 0)
+	    VEC_safe_push (int, heap, multi_locators_vals,
+			   VEC_index (int, multi_locators_vals, ++index));
+	}
+    }
+
+  VEC_safe_push (int, heap, multi_locators_vals, loc);
+}
+
+/* Set the locator of the insn chain starting at INSN to LOC.  */
+
+void
+set_insn_locators (rtx insn, int loc)
+{
+  while (insn != NULL_RTX)
+    {
+      if (INSN_P (insn))
+	INSN_LOCATOR (insn) = loc;
+      insn = NEXT_INSN (insn);
+    }
 }
 
 static unsigned int
@@ -460,12 +548,27 @@ change_scope (rtx orig_insn, tree s1, tree s2)
     }
 }
 
+/* Return the real (first) locator for locator LOC.  */
+static int
+remove_multi_locator (int loc)
+{
+  int index;
+
+  if (loc >= 0)
+    return loc;
+
+  index = VEC_index (int, multi_locators_locs, - (loc + 1));
+  return VEC_index (int, multi_locators_vals, index + 1);
+}
+
 /* Return lexical scope block locator belongs to.  */
 static tree
 locator_scope (int loc)
 {
   int max = VEC_length (int, block_locators_locs);
   int min = 0;
+
+  loc = remove_multi_locator (loc);
 
   /* When block_locators_locs was initialized, the pro- and epilogue
      insns didn't exist yet and can therefore not be found this way.
@@ -513,6 +616,8 @@ locator_location (int loc)
   int max = VEC_length (int, locations_locators_locs);
   int min = 0;
 
+  loc = remove_multi_locator (loc);
+
   while (1)
     {
       int pos = (min + max) / 2;
@@ -529,6 +634,69 @@ locator_location (int loc)
 	}
     }
   return *VEC_index (location_t, locations_locators_vals, min);
+}
+
+/* Expand the source location LOC into a human readable location.  If non-null,
+   INSTANCE is set to the instance id associated with LOC in the table, if any.
+   By the same token, if non-null, MULTI is set to whether there are more than
+   one statement in the original source code on this line.  */
+
+static expanded_location
+expand_location_with_info (location_t loc, int *instance, bool *multi)
+{
+  const struct line_map *map;
+  expanded_location xloc = expand_location_1 (loc, &map);
+  const int map_no
+    = linemap_check_ordinary (map) - LINEMAPS_ORDINARY_MAP_AT (line_table, 0);
+
+  if (instance && instance_table)
+    *instance = (map != NULL) ? instance_table[map_no] : 0;
+
+  if (multi && multi_stmt_lines)
+    *multi
+       = (map != NULL)
+	 ? bitmap_bit_p (multi_stmt_lines[map_no], xloc.line)
+	 : false;
+
+  return xloc;
+}
+
+/* Return expanded location of the statement that produced this insn.  */
+expanded_location
+insn_location (const_rtx insn, int *instance, bool *multi)
+{
+  const expanded_location null_location = { NULL, 0, 0, false };
+  const int loc = INSN_LOCATOR (insn);
+  if (!loc)
+    return null_location;
+  return expand_location_with_info (locator_location (loc), instance, multi);
+}
+
+/* Likewise for the other statements that produced this insn, if any.  */
+expanded_location
+insn_multi_location (const_rtx insn, unsigned int i,
+		     int *instance, bool *multi)
+{
+  const expanded_location null_location = { NULL, 0, 0, false };
+  const int loc = INSN_LOCATOR (insn);
+  int index, rloc;
+  unsigned int n;
+
+  gcc_assert (loc < 0);
+
+  index = VEC_index (int, multi_locators_locs, - (loc + 1));
+  n = VEC_index (int, multi_locators_vals, index);
+
+  /* We skip the first location, i.e. the one returned by insn_location.  */
+  if (i >= n - 1)
+    return null_location;
+
+  /* We use a LIFO scheme to cope with the handling of debug insns.  */
+  rloc = VEC_index (int, multi_locators_vals, index + n - i);
+  if (!rloc)
+    return null_location;
+
+  return expand_location_with_info (locator_location (rloc), instance, multi);
 }
 
 /* Return source line of the statement that produced this insn.  */
@@ -578,6 +746,26 @@ locator_eq (int loc1, int loc2)
   if (locator_location (loc1) != locator_location (loc2))
     return false;
   return locator_scope (loc1) == locator_scope (loc2);
+}
+
+/* Return true if the source line of INSN is not the final one.  */
+
+bool
+non_final_source_line (const_rtx insn)
+{
+  /* Skip lexical blocks and EH region markers, if any.  */
+  while (NOTE_P (insn)
+	 && (NOTE_KIND (insn) == NOTE_INSN_BLOCK_BEG
+	     || NOTE_KIND (insn) == NOTE_INSN_EH_REGION_BEG))
+    insn = NEXT_INSN (insn);
+
+  if (!INSN_P (insn))
+   return false;
+
+  if (locator_location (INSN_LOCATOR (insn)) == cfun->function_end_locus)
+    return false;
+
+  return true;
 }
 
 /* Rebuild all the NOTE_INSN_BLOCK_BEG and NOTE_INSN_BLOCK_END notes based
@@ -935,9 +1123,9 @@ fixup_reorder_chain (void)
 	force_nonfallthru (e);
     }
 
-  /* Ensure goto_locus from edges has some instructions with that locus
-     in RTL.  */
-  if (!optimize)
+  /* Ensure goto_locus from edges has some instructions with that locus in RTL
+     when not optimizing CFG.  */
+  if (!optimize_cfg && !DECL_IGNORED_P (current_function_decl))
     FOR_EACH_BB (bb)
       {
         edge e;

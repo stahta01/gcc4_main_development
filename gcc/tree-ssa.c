@@ -1285,14 +1285,16 @@ useless_type_conversion_p (tree outer_type, tree inner_type)
   else if (TREE_CODE (inner_type) == ARRAY_TYPE
 	   && TREE_CODE (outer_type) == ARRAY_TYPE)
     {
-      /* Preserve string attributes.  */
+      /* Preserve various attributes.  */
+      if (TYPE_REVERSE_STORAGE_ORDER (inner_type)
+	  != TYPE_REVERSE_STORAGE_ORDER (outer_type))
+	return false;
       if (TYPE_STRING_FLAG (inner_type) != TYPE_STRING_FLAG (outer_type))
 	return false;
 
       /* Conversions from array types with unknown extent to
 	 array types with known extent are not useless.  */
-      if (!TYPE_DOMAIN (inner_type)
-	  && TYPE_DOMAIN (outer_type))
+      if (!TYPE_DOMAIN (inner_type) && TYPE_DOMAIN (outer_type))
 	return false;
 
       /* Nor are conversions from array types with non-constant size to
@@ -1924,6 +1926,163 @@ maybe_optimize_var (tree var, bitmap addresses_taken, bitmap not_reg_needs)
   return update_vops;
 }
 
+
+struct walk_info_data
+{
+  /* Map of fields in non-local frame structures to variables.  */
+  struct pointer_map_t *field_map;
+
+  /* Bitmap of variables whose address is taken.  */
+  bitmap addresses_taken;
+};
+
+/* Retrieve the actual base for the component reference REF.  */
+
+static tree
+get_base_of_component_ref (tree ref)
+{
+  tree base = TREE_OPERAND (ref, 0);
+  tree field = TREE_OPERAND (ref, 1);
+
+  /* Strip transparent MEM_REFs around the base.  */
+  if (TREE_CODE (base) == MEM_REF)
+    {
+      tree op0 = TREE_OPERAND (base, 0);
+
+      if (TREE_CODE (op0) == ADDR_EXPR
+	  && DECL_CONTEXT (field)
+	     == TYPE_MAIN_VARIANT (TREE_TYPE (TREE_OPERAND (op0, 0)))
+	  && integer_zerop (TREE_OPERAND (base, 1)))
+	base = TREE_OPERAND (op0, 0);
+    }
+
+  return base;
+}
+
+/* Given FIELD, a field in a non-local frame structure, find or create a
+   variable in the current function and register it with MAP.  This is
+   the reverse function of tree-nested.c:lookup_field_for_decl.  */
+
+static tree
+lookup_decl_for_field (tree field, struct pointer_map_t *map)
+{
+  void **slot = pointer_map_insert (map, field);
+  if (!*slot)
+    {
+      tree decl = build_decl (DECL_SOURCE_LOCATION (field), VAR_DECL,
+			      DECL_NAME (field), TREE_TYPE (field));
+      /* Some targets limit alignment of fields to a lower boundary than
+         that of variables unless it was overridden by attribute aligned.  */
+      if (DECL_USER_ALIGN (field))
+	{
+	  DECL_ALIGN (decl) = DECL_ALIGN (field);
+	  DECL_USER_ALIGN (decl) = 1;
+	}
+      else
+	DECL_ALIGN (decl) = TYPE_ALIGN (TREE_TYPE (field));
+      TREE_ADDRESSABLE (decl) = !DECL_NONADDRESSABLE_P (field);
+      TREE_THIS_VOLATILE (decl) = TREE_THIS_VOLATILE (field);
+      TREE_USED (decl) = 1;
+      gimple_add_tmp_var (decl);
+      if (!TREE_ADDRESSABLE (decl) && is_gimple_reg (decl))
+	mark_sym_for_renaming (decl);
+      *slot = decl;
+    }
+
+  return (tree) *slot;
+}
+
+/* Callback for walk_gimple_op.  Replace component and memory references to
+   non-local frame structures pointed to by TP with individual variables.  */
+
+static tree
+split_nonlocal_frames_op (tree *tp, int *walk_subtrees, void *info)
+{
+  struct walk_info_data *data
+    = (struct walk_info_data *) ((struct walk_stmt_info *)info)->info;
+  bool address_taken;
+  tree base;
+
+  if (TREE_CODE (*tp) == ADDR_EXPR)
+    {
+      tp = &TREE_OPERAND (*tp, 0);
+      address_taken = true;
+    }
+  else if (TREE_CODE (*tp) == TARGET_MEM_REF
+	   && TREE_CODE (TMR_BASE (*tp)) == ADDR_EXPR)
+    {
+      tp = &TREE_OPERAND (TMR_BASE (*tp), 0);
+      address_taken = true;
+    }
+  else if (TREE_CODE (*tp) == OBJ_TYPE_REF
+	   && TREE_CODE (OBJ_TYPE_REF_OBJECT (*tp)) == ADDR_EXPR)
+    {
+      tp = &TREE_OPERAND (OBJ_TYPE_REF_OBJECT (*tp), 0);
+      address_taken = true;
+    }
+  else
+    address_taken = false;
+
+  /* Deal with regular field references and retrieve the base.  This includes
+     MEM_REFs for which no field references have been flattened.  */
+  while (handled_component_p (*tp))
+    if (TREE_CODE (*tp) == COMPONENT_REF
+	&& (base = get_base_of_component_ref (*tp))
+	&& TREE_CODE (base) == VAR_DECL
+	&& DECL_NONLOCAL_FRAME (base)
+	&& !bitmap_bit_p (data->addresses_taken, DECL_UID (base)))
+      {
+	tree decl
+	  = lookup_decl_for_field (TREE_OPERAND (*tp, 1), data->field_map);
+	if (address_taken)
+	  {
+	    bitmap_set_bit (data->addresses_taken, DECL_UID (decl));
+	    /* ??? Kludge to work around a SRA bug: build_ref_for_offset can
+	       take the address of a non-addressable field in BASE.  */
+	    if (!is_gimple_reg_type (TREE_TYPE (decl)))
+	      TREE_ADDRESSABLE (decl) = 1;
+	  }
+	*tp = decl;
+	break;
+      }
+    else
+      tp = &TREE_OPERAND (*tp, 0);
+
+  /* Deal with remaining MEM_REFs, i.e. those for which the field reference
+     has been replaced with the offset.  */
+  if (TREE_CODE (*tp) == MEM_REF
+      && TREE_CODE (TREE_OPERAND (*tp, 0)) == ADDR_EXPR
+      && (base = TREE_OPERAND (TREE_OPERAND (*tp, 0), 0))
+      && TREE_CODE (base) == VAR_DECL
+      && DECL_NONLOCAL_FRAME (base)
+      && !bitmap_bit_p (data->addresses_taken, DECL_UID (base)))
+    {
+      tree frame_type = TREE_TYPE (base);
+      tree offset = TREE_OPERAND (*tp, 1);
+      tree field, next, decl, addr;
+
+      for (field = TYPE_FIELDS (frame_type), next = DECL_CHAIN (field);
+	   next;
+	   field = next, next = DECL_CHAIN (next))
+	if (tree_int_cst_lt (offset, byte_position (next)))
+	  break;
+
+      decl = lookup_decl_for_field (field, data->field_map);
+      if (address_taken)
+	bitmap_set_bit (data->addresses_taken, DECL_UID (decl));
+
+      addr = build_fold_addr_expr (decl);
+      if (TREE_TYPE (offset) == TREE_TYPE (TREE_OPERAND (*tp, 0)))
+	offset = fold_convert (TREE_TYPE (addr), offset);
+      *tp = fold_build2 (MEM_REF, TREE_TYPE (*tp), addr,
+			 int_const_binop (MINUS_EXPR, offset,
+					  byte_position (field)));
+    }
+
+  *walk_subtrees = 0;
+  return NULL_TREE;
+}
+
 /* Compute TREE_ADDRESSABLE and DECL_GIMPLE_REG_P for local variables.  */
 
 void
@@ -1933,6 +2092,7 @@ execute_update_addresses_taken (void)
   basic_block bb;
   bitmap addresses_taken = BITMAP_ALLOC (NULL);
   bitmap not_reg_needs = BITMAP_ALLOC (NULL);
+  bool split_nonlocal_frames = false;
   bool update_vops = false;
   tree var;
   unsigned i;
@@ -2026,6 +2186,38 @@ execute_update_addresses_taken (void)
 		bitmap_set_bit (addresses_taken, DECL_UID (var));
 	    }
 	}
+    }
+
+  /* If non-local frame structures don't have their address taken as a whole,
+     they can be broken up back into variables since they are never accessed
+     directly as a whole.  */
+  FOR_EACH_VEC_ELT (tree, cfun->local_decls, i, var)
+    if (TREE_CODE (var) == VAR_DECL
+	&& DECL_NONLOCAL_FRAME (var)
+	&& !bitmap_bit_p (addresses_taken, DECL_UID (var)))
+      {
+	split_nonlocal_frames = true;
+	break;
+      }
+
+  /* Break up non-local frame structures when possible.  This will in turn
+     expose more scalarization opportunities for subsequent SRA passes.  */
+  if (split_nonlocal_frames)
+    {
+      struct walk_stmt_info wi;
+      struct walk_info_data data;
+
+      data.field_map = pointer_map_create ();
+      data.addresses_taken = addresses_taken;
+      memset (&wi, 0, sizeof (wi));
+      wi.info = &data;
+
+      FOR_EACH_BB (bb)
+	for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
+	  walk_gimple_op (gsi_stmt (gsi), split_nonlocal_frames_op, &wi);
+
+      pointer_map_destroy (data.field_map);
+      update_vops = true;
     }
 
   /* We cannot iterate over all referenced vars because that can contain

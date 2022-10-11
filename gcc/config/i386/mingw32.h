@@ -111,13 +111,23 @@ along with GCC; see the file COPYING3.  If not see
 #define SUBTARGET_EXTRA_SPECS						\
   { "shared_libgcc_undefs", SHARED_LIBGCC_UNDEFS_SPEC }
 
+/* Arrange to enable large address support by default.  This requires
+   an explicit linker option on 32bit targets.  */
+
+#undef LINK_ENABLE_LARGE_ADDRESS
+#if TARGET_64BIT_DEFAULT
+#define LINK_ENABLE_LARGE_ADDRESS
+#else
+#define LINK_ENABLE_LARGE_ADDRESS " --large-address-aware"
+#endif
+
 #define LINK_SPEC "%{mwindows:--subsystem windows} \
   %{mconsole:--subsystem console} \
   %{shared: %{mdll: %eshared and mdll are not compatible}} \
   %{shared: --shared} %{mdll:--dll} \
   %{static:-Bstatic} %{!static:-Bdynamic} \
   %{shared|mdll: " SUB_LINK_ENTRY " --enable-auto-image-base} \
-  %(shared_libgcc_undefs)"
+  %(shared_libgcc_undefs)" LINK_ENABLE_LARGE_ADDRESS
 
 /* Include in the mingw32 libraries with libgcc */
 #ifdef ENABLE_SHARED_LIBGCC

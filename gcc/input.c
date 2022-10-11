@@ -30,22 +30,39 @@ location_t input_location;
 
 struct line_maps *line_table;
 
+/* For languages that have the notion of instantiating a given template
+   multiple times, different linemaps can be allocated for each instance,
+   which are distinguished by an instance id.  When flag_debug_instances is
+   enabled, this table (which has the same indices as the ordinary linemaps
+   in line_table) stores these instance ids.  */
+int *instance_table;
+
+/* When flag_dump_scos is enabled, this contains an array of bitmaps. Each
+   bitmap correspond to an ordinary map and they have the same indices as in
+   LINE_TABLE. For each line in the associated ordinary map, the corresponding
+   bit in the bitmap indicates whether it contains more than one statement.  */
+bitmap *multi_stmt_lines;
+
 /* Expand the source location LOC into a human readable location.  If
    LOC resolves to a builtin location, the file name of the readable
-   location is set to the string "<built-in>".  */
+   location is set to the string "<built-in>".  If non-null, MAP is set
+   to the line_map LOC was found in.  */
 
 expanded_location
-expand_location (source_location loc)
+expand_location_1 (source_location loc, const struct line_map **map)
 {
   expanded_location xloc;
-  const struct line_map *map;
+  const struct line_map *resolved_map;
 
   loc = linemap_resolve_location (line_table, loc,
-				  LRK_SPELLING_LOCATION, &map);
-  xloc = linemap_expand_location (line_table, map, loc);
+				  LRK_SPELLING_LOCATION, &resolved_map);
+  xloc = linemap_expand_location (line_table, resolved_map, loc);
 
   if (loc <= BUILTINS_LOCATION)
     xloc.file = loc == UNKNOWN_LOCATION ? NULL : _("<built-in>");
+
+  if (map)
+    *map = resolved_map;
 
   return xloc;
 }

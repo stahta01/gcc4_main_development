@@ -8,7 +8,7 @@ public:
       Graph(void) {} // { dg-error "7:'Graph" }
 }
 
-Graph::Graph(void) // { dg-error "18:return type|1: error: redefinition" }
+Graph::Graph(void) // { dg-error "18:return type|8: error: redefinition" }
 {    N = 10;
 }
 

@@ -1,6 +1,6 @@
 ; Options for the DEC Alpha port of the compiler
 ;
-; Copyright (C) 2005, 2007 Free Software Foundation, Inc.
+; Copyright (C) 2005, 2007, 2013 Free Software Foundation, Inc.
 ;
 ; This file is part of GCC.
 ;
@@ -132,3 +132,5 @@ Tune expected memory latency
 mtls-size=
 Target RejectNegative Joined UInteger Var(alpha_tls_size) Init(32)
 Specify bit size of immediate TLS offsets
+
+; This comment is to ensure we retain the blank line above.

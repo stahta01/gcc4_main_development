@@ -47,6 +47,9 @@ along with GCC; see the file COPYING3.  If not see
    we don't want to reenter it.  */
 static bool df_in_progress = false;
 
+/* True if we are allowed to alter the CFG in this pass.  */
+static bool can_alter_cfg = false;
+
 /* Instructions that have been marked but whose dependencies have not
    yet been processed.  */
 static VEC(rtx,heap) *worklist;
@@ -113,8 +116,9 @@ deletable_insn_p (rtx insn, bool fast, bitmap arg_stores)
   if (!NONJUMP_INSN_P (insn))
     return false;
 
-  /* Don't delete insns that can throw.  */
-  if (!insn_nothrow_p (insn))
+  /* Don't delete insns that may throw if we cannot do so.  */
+  if (!(cfun->can_delete_dead_exceptions && can_alter_cfg)
+      && !insn_nothrow_p (insn))
     return false;
 
   body = PATTERN (insn);
@@ -553,6 +557,13 @@ delete_unmarked_insns (void)
 	  else if (marked_insn_p (insn))
 	    continue;
 
+	  /* If we are preserving the control flow of the source code,
+	     do not delete NOPs created to carry source locations.  */
+	  else if (flag_preserve_control_flow
+		   && INSN_P (insn)
+		   && PATTERN (insn) == const0_rtx)
+	    continue;
+
 	  /* Beware that reaching a dbg counter limit here can result
 	     in miscompiled file.  This occurs when a group of insns
 	     must be deleted together, typically because the kept insn
@@ -711,7 +722,10 @@ init_dce (bool fast)
     {
       bitmap_obstack_initialize (&dce_blocks_bitmap_obstack);
       bitmap_obstack_initialize (&dce_tmp_bitmap_obstack);
+      can_alter_cfg = false;
     }
+  else
+    can_alter_cfg = true;
 
   marked = sbitmap_alloc (get_max_uid () + 1);
   sbitmap_zero (marked);

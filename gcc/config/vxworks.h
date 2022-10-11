@@ -1,5 +1,5 @@
 /* Common VxWorks target definitions for GNU compiler.
-   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2010
+   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2007, 2010, 2014
    Free Software Foundation, Inc.
    Contributed by Wind River Systems.
    Rewritten by CodeSourcery, LLC.
@@ -50,7 +50,7 @@ along with GCC; see the file COPYING3.  If not see
 #define	VXWORKS_LIB_SPEC						\
 "%{mrtp:%{shared:-u " USER_LABEL_PREFIX "__init -u " USER_LABEL_PREFIX "__fini} \
 	%{!shared:%{non-static:-u " USER_LABEL_PREFIX "_STI__6__rtld -ldl} \
-		  --start-group -lc -lgcc -lc_internal -lnet -ldsi	\
+		  --start-group %{!vxcert:-lc -lgcc -lc_internal -lnet -ldsi}	\
 		  --end-group}}"
 
 /* The no-op spec for "-shared" below is present because otherwise GCC
@@ -72,17 +72,25 @@ along with GCC; see the file COPYING3.  If not see
  %{mrtp:%{!shared:%{!non-static:-static}		\
  		  %{non-static:--force-dynamic --export-dynamic}}}"
 
-/* For VxWorks, the system provides libc_internal.a.  This is a superset
-   of libgcc.a; we want to use it.  Make sure not to dynamically export
-   any of its symbols, though.  Always look for libgcc.a first so that
-   we get the latest versions of the GNU intrinsics during our builds.  */
+/* For VxWorks static rtps, the system provides libc_internal.a, a superset
+   of libgcc.a that we want to use.  Make sure not to dynamically export any
+   of its symbols, though, and always look for libgcc.a first so that we get
+   the latest versions of the GNU intrinsics during our builds.  */
 #undef VXWORKS_LIBGCC_SPEC
 #define VXWORKS_LIBGCC_SPEC \
-  "-lgcc %{mrtp:--exclude-libs=libc_internal,libgcc -lc_internal}"
+  "%{!vxcert:-lgcc} %{mrtp:%{!shared:--exclude-libs=libc_internal,libgcc \
+   %{!vxcert:-lc_internal}}}"
 
 #undef VXWORKS_STARTFILE_SPEC
-#define	VXWORKS_STARTFILE_SPEC "%{mrtp:%{!shared:-l:crt0.o}}"
-#define VXWORKS_ENDFILE_SPEC ""
+#define	VXWORKS_STARTFILE_SPEC                 \
+ "%{mrtp:%{!shared:%{!vxcert:-l:crt0.o}}}      \
+  %{crtbe:%{!nocrtbe:%{auto-register:          \
+          %{!noauto-register:crtbegin.o%s}     \
+          %{noauto-register:crtbeginT.o%s}}}}"
+
+#undef VXWORKS_ENDFILE_SPEC
+#define VXWORKS_ENDFILE_SPEC \
+ "%{!nocrtbe:%{crtbe:crtend.o%s}}"
 
 /* Do VxWorks-specific parts of TARGET_OPTION_OVERRIDE.  */
 #undef VXWORKS_OVERRIDE_OPTIONS

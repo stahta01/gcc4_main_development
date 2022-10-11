@@ -1,5 +1,5 @@
 /* Definitions of target machine for GCC for VMS.
-   Copyright (C) 2011 Free Software Foundation, Inc.
+   Copyright (C) 2011, 2013 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -22,6 +22,7 @@ extern void vms_c_register_pragma (void);
 
 /* vms.c  */
 void vms_patch_builtins (void);
+void vms_file_end (void);
 
 #ifdef TREE_CODE
 extern section *vms_function_section (tree decl ATTRIBUTE_UNUSED,

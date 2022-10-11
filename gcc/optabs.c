@@ -3028,6 +3028,47 @@ expand_unop (enum machine_mode mode, optab unoptab, rtx op0, rtx target,
   /* Widening (or narrowing) bswap needs special treatment.  */
   if (unoptab == bswap_optab)
     {
+      /* HImode is special because in this mode BSWAP is equivalent to ROTATE
+	 or ROTATERT.  First try these directly; if this fails, then try the
+	 obvious pair of shifts with allowed widening, as this will probably
+	 be always more efficient than the other fallback methods.  */
+      if (mode == HImode)
+	{
+	  rtx last, temp1, temp2;
+
+	  if (optab_handler (rotl_optab, mode) != CODE_FOR_nothing)
+	    {
+	      temp = expand_binop (mode, rotl_optab, op0, GEN_INT (8), target,
+				   unsignedp, OPTAB_DIRECT);
+	      if (temp)
+		return temp;
+	     }
+
+	  if (optab_handler (rotr_optab, mode) != CODE_FOR_nothing)
+	    {
+	      temp = expand_binop (mode, rotr_optab, op0, GEN_INT (8), target,
+				   unsignedp, OPTAB_DIRECT);
+	      if (temp)
+		return temp;
+	    }
+
+	  last = get_last_insn ();
+
+	  temp1 = expand_binop (mode, ashl_optab, op0, GEN_INT (8), NULL_RTX,
+			        unsignedp, OPTAB_WIDEN);
+	  temp2 = expand_binop (mode, lshr_optab, op0, GEN_INT (8), NULL_RTX,
+			        unsignedp, OPTAB_WIDEN);
+	  if (temp1 && temp2)
+	    {
+	      temp = expand_binop (mode, ior_optab, temp1, temp2, target,
+				   unsignedp, OPTAB_WIDEN);
+	      if (temp)
+		return temp;
+	    }
+
+	  delete_insns_since (last);
+	}
+
       temp = widen_bswap (mode, op0, target);
       if (temp)
 	return temp;
@@ -3219,10 +3260,10 @@ expand_unop (enum machine_mode mode, optab unoptab, rtx op0, rtx target,
 	      /* For certain operations, we need not actually extend
 		 the narrow operand, as long as we will truncate the
 		 results to the same narrowness.  */
-
 	      xop0 = widen_operand (xop0, wider_mode, mode, unsignedp,
 				    (unoptab == neg_optab
-				     || unoptab == one_cmpl_optab)
+				     || unoptab == one_cmpl_optab
+				     || unoptab == bswap_optab)
 				    && mclass == MODE_INT);
 
 	      temp = expand_unop (wider_mode, unoptab, xop0, NULL_RTX,
@@ -3236,6 +3277,20 @@ expand_unop (enum machine_mode mode, optab unoptab, rtx op0, rtx target,
 				     GEN_INT (GET_MODE_PRECISION (wider_mode)
 					      - GET_MODE_PRECISION (mode)),
 				     target, true, OPTAB_DIRECT);
+
+	      /* Likewise for bswap.  */
+	      if (unoptab == bswap_optab && temp != 0)
+		{
+		  gcc_assert (GET_MODE_PRECISION (wider_mode)
+			      == GET_MODE_BITSIZE (wider_mode)
+			      && GET_MODE_PRECISION (mode)
+				 == GET_MODE_BITSIZE (mode));
+
+		  temp = expand_shift (RSHIFT_EXPR, wider_mode, temp,
+				       GET_MODE_BITSIZE (wider_mode)
+				       - GET_MODE_BITSIZE (mode),
+				       NULL_RTX, true);
+		}
 
 	      if (temp)
 		{
@@ -5009,30 +5064,168 @@ expand_float (rtx to, rtx from, int unsignedp)
     }
 
   /* No hardware instruction available; call a library routine.  */
-    {
-      rtx libfunc;
-      rtx insns;
-      rtx value;
-      convert_optab tab = unsignedp ? ufloat_optab : sfloat_optab;
+  {
+    rtx libfunc;
 
-      if (GET_MODE_SIZE (GET_MODE (from)) < GET_MODE_SIZE (SImode))
-	from = convert_to_mode (SImode, from, unsignedp);
+    convert_optab tab = unsignedp ? ufloat_optab : sfloat_optab;
 
-      libfunc = convert_optab_libfunc (tab, GET_MODE (to), GET_MODE (from));
-      gcc_assert (libfunc);
+    if (GET_MODE_SIZE (GET_MODE (from)) < GET_MODE_SIZE (SImode))
+      from = convert_to_mode (SImode, from, unsignedp);
 
-      start_sequence ();
+    libfunc = convert_optab_libfunc (tab, GET_MODE (to), GET_MODE (from));
+    if (libfunc)
+      {
+	rtx insns;
+	rtx value;
 
-      value = emit_library_call_value (libfunc, NULL_RTX, LCT_CONST,
-				       GET_MODE (to), 1, from,
-				       GET_MODE (from));
-      insns = get_insns ();
-      end_sequence ();
+	start_sequence ();
 
-      emit_libcall_block (insns, target, value,
-			  gen_rtx_fmt_e (unsignedp ? UNSIGNED_FLOAT : FLOAT,
-					 GET_MODE (to), from));
-    }
+	value = emit_library_call_value (libfunc, NULL_RTX, LCT_CONST,
+					 GET_MODE (to), 1, from,
+					 GET_MODE (from));
+	insns = get_insns ();
+	end_sequence ();
+
+	emit_libcall_block (insns, target, value,
+			    gen_rtx_fmt_e (unsignedp ? UNSIGNED_FLOAT : FLOAT,
+					   GET_MODE (to), from));
+	}
+
+    /* If the library routine is missing for some reason, open-code.  */
+    else if (GET_MODE (to) == DFmode && GET_MODE (from) == DImode)
+      {
+	/* Expand a floatdidf or a floatundidf operation.  The algorithm is
+	   described by the following C function:
+
+	   #define MAXp1 0x1p32
+
+	   double float[un]didf ([u]int64_t a)
+	   {
+	     double hi = ([u]int32_t) (a >> 32);
+	     double lo = (uint32_t) a;
+	     return hi * MAXp1 + lo;
+	   }
+
+	   This works because there are enough digits in the mantissa of
+	   a double to hold a uint32_t without rounding.  */
+
+	REAL_VALUE_TYPE rv;
+	rtx MAXp1, hi, lo, x, y, r;
+
+	real_2expN (&rv, 32, DFmode);
+	MAXp1 = CONST_DOUBLE_FROM_REAL_VALUE (rv, DFmode);
+
+	x = expand_shift (RSHIFT_EXPR, DImode, from, 32, NULL_RTX, unsignedp);
+	x = convert_to_mode (SImode, x, unsignedp);
+	hi = gen_reg_rtx (DFmode);
+	expand_float (hi, x, unsignedp);
+
+	y = convert_to_mode (SImode, from, 1);
+	lo = gen_reg_rtx (DFmode);
+	expand_float (lo, y, 1);
+
+	if (optab_handler (fma_optab, DFmode) == CODE_FOR_nothing)
+	  {
+	    r = expand_binop (DFmode, smul_optab, hi, MAXp1, NULL_RTX, 0,
+			      OPTAB_LIB_WIDEN);
+	    r = expand_binop (DFmode, add_optab, r, lo, to, 0,
+			      OPTAB_LIB_WIDEN);
+	  }
+	else
+	  r = expand_ternary_op (DFmode, fma_optab, hi, MAXp1, lo, to, 0);
+	if (r != to)
+	  emit_move_insn (to, r);
+      }
+
+    else if (GET_MODE (to) == SFmode && GET_MODE (from) == DImode)
+      {
+#define PROB_VERY_UNLIKELY	(REG_BR_PROB_BASE / 2000 - 1)
+#define PROB_VERY_LIKELY	(REG_BR_PROB_BASE - PROB_VERY_UNLIKELY)
+
+	rtx limit
+	  = simplify_gen_binary (ASHIFT, DImode, const1_rtx, GEN_INT (53));
+	rtx rep_bit
+	  = simplify_gen_binary (ASHIFT, DImode, const1_rtx, GEN_INT (11));
+	rtx from2, lab, limit2, x, mask, r;
+
+	from2 = copy_to_reg (from);
+	lab = gen_label_rtx ();
+
+	if (unsignedp)
+	  {
+	    /* Expand a floatundisf operation by rounding the result of
+	       floatundidf.  But we need to protect the code against
+	       double-rounding so we represent any low-order bits
+	       that might be truncated by a bit that won't be lost:
+
+	       #define DIG 53
+	       #define REP_BIT ((uint64_t) 1 << (64 - DIG))
+
+	       if (!(a < ((uint64_t) 1 << DIG)))
+		 {
+		   if ((uint64_t) a & (REP_BIT - 1))
+		     {
+		       a &= ~ (REP_BIT - 1);
+		       a |= REP_BIT;
+		     }
+		 }
+
+	       and invoke floatundidf on the adjusted input.  */
+
+	    do_compare_rtx_and_jump (from, limit, LT, 1, DImode, NULL_RTX,
+				     NULL_RTX, lab, PROB_VERY_LIKELY);
+	  }
+	else
+	  {
+	    /* Expand a floatdisf operation by rounding the result of
+	       floatdidf.  But we need to protect the code against
+	       double-rounding so we represent any low-order bits
+	       that might be truncated by a bit that won't be lost:
+
+	       #define DIG 53
+	       #define REP_BIT ((uint64_t) 1 << (64 - DIG))
+
+	       if (!(-((int64_t) 1 << DIG) < a && a < ((int64_t) 1 << DIG)))
+		 {
+		   if ((uint64_t) a & (REP_BIT - 1))
+		     {
+		       a &= ~ (REP_BIT - 1);
+		       a |= REP_BIT;
+		     }
+		 }
+
+	       and invoke floatdidf on the adjusted input.  */
+
+	    x = expand_binop (DImode, add_optab, from, limit, NULL_RTX, 0,
+			      OPTAB_LIB_WIDEN);
+	    limit2 = simplify_gen_binary (ASHIFT, DImode, limit, const1_rtx);
+	    do_compare_rtx_and_jump (x, limit2, LT, 1, DImode, NULL_RTX,
+				     NULL_RTX, lab, PROB_VERY_LIKELY);
+	  }
+
+	mask = simplify_gen_binary (MINUS, DImode, rep_bit, const1_rtx);
+	x = expand_binop (DImode, and_optab, from, mask, NULL_RTX, 1,
+			  OPTAB_LIB_WIDEN);
+	do_compare_rtx_and_jump (x, const0_rtx, EQ, 1, DImode, NULL_RTX,
+				 NULL_RTX, lab, -1);
+
+	mask = simplify_gen_unary (NOT, DImode, mask, DImode);
+	x = expand_binop (DImode, and_optab, from, mask, NULL_RTX, 1,
+			  OPTAB_LIB_WIDEN);
+	x = expand_binop (DImode, ior_optab, x, rep_bit, from2, 1,
+			  OPTAB_LIB_WIDEN);
+	if (x != from2)
+	  emit_move_insn (from2, x);
+
+	emit_label (lab);
+	r = gen_reg_rtx (DFmode);
+	expand_float (r, from2, unsignedp);
+	convert_move (to, r, 0);
+      }
+
+    else
+      gcc_unreachable ();
+  }
 
  done:
 
@@ -5199,25 +5392,175 @@ expand_fix (rtx to, rtx from, int unsignedp)
     }
   else
     {
-      rtx insns;
-      rtx value;
       rtx libfunc;
 
       convert_optab tab = unsignedp ? ufix_optab : sfix_optab;
       libfunc = convert_optab_libfunc (tab, GET_MODE (to), GET_MODE (from));
-      gcc_assert (libfunc);
 
-      start_sequence ();
+      if (libfunc)
+	{
+	  rtx value, insns;
 
-      value = emit_library_call_value (libfunc, NULL_RTX, LCT_CONST,
-				       GET_MODE (to), 1, from,
-				       GET_MODE (from));
-      insns = get_insns ();
-      end_sequence ();
+	  start_sequence ();
 
-      emit_libcall_block (insns, target, value,
-			  gen_rtx_fmt_e (unsignedp ? UNSIGNED_FIX : FIX,
-					 GET_MODE (to), from));
+	  value = emit_library_call_value (libfunc, NULL_RTX, LCT_CONST,
+					   GET_MODE (to), 1, from,
+					   GET_MODE (from));
+	  insns = get_insns ();
+	  end_sequence ();
+
+	  emit_libcall_block (insns, target, value,
+			      gen_rtx_fmt_e (unsignedp ? UNSIGNED_FIX : FIX,
+					     GET_MODE (to), from));
+	}
+
+      /* If the library routine is missing for some reason, open-code.  */
+      else if (GET_MODE (to) == DImode && GET_MODE (from) == DFmode)
+	{
+	  /* We'll be using a fused multiply-add in the algorithm.  */
+	  gcc_assert (optab_handler (fma_optab, DFmode) != CODE_FOR_nothing);
+
+	  if (unsignedp)
+	    {
+	      /* Expand a fixunsdfdi operation.  The algorithm is described
+		 by the following C function:
+
+	         #define MAXp1 0x1p32
+
+		 uint64_t fixunsdfdi (double a)
+		 {
+		   // Get high part of result.  The division here will just
+		      moves the radix point and will not cause any rounding.
+		      Then the conversion to integral type chops result as
+		      desired.
+		   const uint32_t hi = a / MAXp1;
+
+		   // Get low part of result.  Convert `hi' to floating type
+		      and scale it back then subtract this from the number
+		      being converted.  This leaves the low part.  Convert
+		      that to unsigned integral type.
+		   const uint32_t lo = a - (double) hi * MAXp1;
+
+		   // Assemble result from the two parts.
+		   return ((uint64_t) hi << 32) | (uint64_t) lo;
+		 }
+
+		 This works because there are enough digits in the mantissa of
+		 a double to hold a uint32_t without rounding.  */
+
+	      REAL_VALUE_TYPE rv;
+	      rtx MAXp1, hi, lo, x, y, r;
+
+	      real_2expN (&rv, -32, DFmode);
+	      MAXp1 = CONST_DOUBLE_FROM_REAL_VALUE (rv, DFmode);
+	      x = expand_binop (DFmode, smul_optab, from, MAXp1, NULL_RTX, 0,
+				OPTAB_LIB_WIDEN);
+	      hi = gen_reg_rtx (SImode);
+	      expand_fix (hi, x, 1);
+
+	      real_2expN (&rv, 32, DFmode);
+	      MAXp1 = CONST_DOUBLE_FROM_REAL_VALUE (rv, DFmode);
+	      y = gen_reg_rtx (DFmode);
+	      expand_float (y, hi, 1);
+	      y = expand_unop (DFmode, neg_optab, y, NULL_RTX, 0);
+	      y = expand_ternary_op (DFmode, fma_optab, y, MAXp1, from,
+				     NULL_RTX, 0);
+	      lo = gen_reg_rtx (SImode);
+	      expand_fix (lo, y, 1);
+
+	      x = convert_to_mode (DImode, hi, 1);
+	      x = expand_shift (LSHIFT_EXPR, DImode, x, 32, NULL_RTX, 1);
+	      y = convert_to_mode (DImode, lo, 1);
+	      r = expand_binop (DImode, ior_optab, x, y, to, 1,
+				OPTAB_LIB_WIDEN);
+	      if (r != to)
+		emit_move_insn (to, r);
+	    }
+	  else
+	    {
+	      /* Expand a fixdfdi operation.  The algorithm is described
+		 by the following C function:
+
+	         #define MAXp1 0x1p32
+
+		 int64_t fixdfdi (double a)
+		 {
+		   // Get high part of result.  The division here will just
+		      moves the radix point and will not cause any rounding.
+		      Then the conversion to integral type chops result as
+		      desired.
+		   const int32_t hi = a / MAXp1;
+
+		   // Get low part of result.  Convert `hi' to floating type
+		      and scale it back then subtract this from the number
+		      being converted.  This leaves the low part.  Convert
+		      that to unsigned integral type.
+		   const uint32_t lo = abs (a - (double) hi * MAXp1);
+
+		   // Assemble result from the two parts.
+		   if (a < 0.0)
+		     return ((int64_t) hi << 32) - (int64_t) lo;
+		   else
+		     return ((int64_t) hi << 32) + (int64_t) lo;
+		 }
+
+		 This works because there are enough digits in the mantissa of
+		 a double to hold a uint32_t without rounding.  */
+
+	      REAL_VALUE_TYPE rv;
+	      rtx MAXp1, hi, lo, x, y, lab1, lab2, r;
+
+	      real_2expN (&rv, -32, DFmode);
+	      MAXp1 = CONST_DOUBLE_FROM_REAL_VALUE (rv, DFmode);
+	      x = expand_binop (DFmode, smul_optab, from, MAXp1, NULL_RTX, 0,
+				OPTAB_LIB_WIDEN);
+	      hi = gen_reg_rtx (SImode);
+	      expand_fix (hi, x, 0);
+
+	      real_2expN (&rv, 32, DFmode);
+	      MAXp1 = CONST_DOUBLE_FROM_REAL_VALUE (rv, DFmode);
+	      y = gen_reg_rtx (DFmode);
+	      expand_float (y, hi, 0);
+	      y = expand_unop (DFmode, neg_optab, y, NULL_RTX, 0);
+	      y = expand_ternary_op (DFmode, fma_optab, y, MAXp1, from,
+				     NULL_RTX, 0);
+	      y = expand_abs (DFmode, y, NULL_RTX, 0, 0);
+	      lo = gen_reg_rtx (SImode);
+	      expand_fix (lo, y, 1);
+
+	      x = convert_to_mode (DImode, hi, 0);
+	      x = expand_shift (LSHIFT_EXPR, DImode, x, 32, NULL_RTX, 0);
+	      y = convert_to_mode (DImode, lo, 1);
+	      lab1 = gen_label_rtx ();
+	      lab2 = gen_label_rtx ();
+	      emit_cmp_and_jump_insns (from, CONST0_RTX (DFmode), LT, NULL_RTX,
+				       DFmode, 0, lab1);
+	      r = expand_binop (DImode, add_optab, x, y, to, 0,
+				OPTAB_LIB_WIDEN);
+	      if (r != to)
+		emit_move_insn (to, r);
+	      emit_jump_insn (gen_jump (lab2));
+	      emit_barrier ();
+	      emit_label (lab1);
+	      r = expand_binop (DImode, sub_optab, x, y, to, 0,
+				OPTAB_LIB_WIDEN);
+	      if (r != to)
+		emit_move_insn (to, r);
+	      emit_label (lab2);
+	    }
+	}
+
+      else if (GET_MODE (to) == DImode && GET_MODE (from) == SFmode)
+	{
+	  /* Expand a fixsfdi or a fixunssfdi operation by extending the
+	     input to DFmode and invoking fixdfdi or fixunsdfdi.  */
+
+	  from = convert_to_mode (DFmode, from, 0);
+	  expand_fix (to, from, unsignedp);
+	}
+
+      else
+	gcc_unreachable ();
     }
 
   if (target != to)
@@ -5967,10 +6310,6 @@ build_libfunc_function (const char *name)
   TREE_PUBLIC (decl) = 1;
   gcc_assert (DECL_ASSEMBLER_NAME (decl));
 
-  /* Zap the nonsensical SYMBOL_REF_DECL for this.  What we're left with
-     are the flags assigned by targetm.encode_section_info.  */
-  SET_SYMBOL_REF_DECL (XEXP (DECL_RTL (decl), 0), NULL);
-
   return decl;
 }
 
@@ -6517,10 +6856,8 @@ init_optabs (void)
     set_optab_libfunc (abs_optab, TYPE_MODE (complex_double_type_node), "cabs");
 
   abort_libfunc = init_one_libfunc ("abort");
-  memcpy_libfunc = init_one_libfunc ("memcpy");
   memmove_libfunc = init_one_libfunc ("memmove");
   memcmp_libfunc = init_one_libfunc ("memcmp");
-  memset_libfunc = init_one_libfunc ("memset");
   setbits_libfunc = init_one_libfunc ("__setbits");
 
 #ifndef DONT_USE_BUILTIN_SETJMP

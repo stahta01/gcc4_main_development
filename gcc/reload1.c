@@ -688,6 +688,39 @@ static int failure;
 /* Temporary array of pseudo-register number.  */
 static int *temp_pseudo_reg_arr;
 
+/* Return true if the location of the no-op INSN needs to be preserved.
+
+   Reload can create no-op moves (moves between the same hard register) as
+   a final result of register allocation.  Since this is a global pass, we
+   may need to preserve specific locations if we want to preserve the CFG.  */
+
+static bool
+preserve_location_for_nop (rtx insn)
+{
+  basic_block bb;
+  rtx dest;
+
+  if (!INSN_LOCATOR (insn))
+    return false;
+
+  if (DECL_IGNORED_P (current_function_decl))
+    return false;
+
+  /* Preserve the location of edges.  */
+  bb = BLOCK_FOR_INSN (insn);
+  if (insn == BB_END (bb)
+      && locator_eq (INSN_LOCATOR (insn), single_succ_edge (bb)->goto_locus))
+    return true;
+
+  /* Preserve the location of user returns.  */
+  dest = SET_DEST (PATTERN (insn));
+  if (REG_EXPR (dest) == DECL_RESULT (current_function_decl)
+      && REG_OFFSET (dest) == 0)
+    return true;
+
+  return false;
+}
+
 /* Main entry point for the reload pass.
 
    FIRST is the first insn of the function being compiled.
@@ -1220,6 +1253,8 @@ reload (rtx first, int global)
 	    && (REGNO (SET_SRC (PATTERN (insn)))
 		== REGNO (SET_DEST (PATTERN (insn)))))
 	  {
+	    if (!optimize_cfg && preserve_location_for_nop (insn))
+	      emit_insn_after (gen_nop (), insn);
 	    delete_insn (insn);
 	    continue;
 	  }

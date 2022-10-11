@@ -295,7 +295,6 @@ new_emutls_decl (tree decl, tree alias_of)
   DECL_WEAK (to) = DECL_WEAK (decl);
   DECL_VISIBILITY (to) = DECL_VISIBILITY (decl);
   DECL_VISIBILITY_SPECIFIED (to) = DECL_VISIBILITY_SPECIFIED (decl);
-  DECL_RESTRICTED_P (to) = DECL_RESTRICTED_P (decl);
   DECL_DLLIMPORT_P (to) = DECL_DLLIMPORT_P (decl);
 
   DECL_ATTRIBUTES (to) = targetm.merge_decl_attributes (decl, to);
@@ -312,8 +311,8 @@ new_emutls_decl (tree decl, tree alias_of)
   if (!DECL_COMMON (to) && targetm.emutls.var_section)
     {
       DECL_SECTION_NAME (to)
-        = build_string (strlen (targetm.emutls.tmpl_section),
-			targetm.emutls.tmpl_section);
+        = build_string (strlen (targetm.emutls.var_section),
+			targetm.emutls.var_section);
     }
 
   /* If this variable is defined locally, then we need to initialize the

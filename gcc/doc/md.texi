@@ -2544,6 +2544,62 @@ An integer constant with all bits set except exactly one.
 Any SYMBOL_REF.
 @end table
 
+@item LMP---@file{config/lmp/constraints.md}
+@table @code
+@item b
+EAM register @code{mdb}
+
+@item c
+EAM register @code{mdc}
+
+@item f
+Floating point register
+
+@ifset INTERNALS
+@item k
+Register for sibcall optimization
+@end ifset
+
+@item l
+General register, but not @code{r29}, @code{r30} and @code{r31}
+
+@item t
+Register @code{r1}
+
+@item u
+Register @code{r2}
+
+@item v
+Register @code{r3}
+
+@item G
+Floating-point constant 0.0
+
+@item I
+Integer constant 65535 (16-bit low mask)
+
+@item J
+Integer constant in the range 0 .. 65535 (16-bit immediate)
+
+@item K
+Integer constant in the range 1 .. 31 (5-bit immediate)
+
+@item L
+Integer constant in the range @minus{}65535 .. @minus{}1 (16-bit negative immediate)
+
+@item M
+Integer constant @minus{}1
+
+@item N
+Integer constant @minus{}65536 (16-bit high mask)
+
+@item O
+Integer constant 0
+
+@item P
+Integer constant 32
+@end table
+
 @item M32C---@file{config/m32c/m32c.c}
 @table @code
 @item Rsp
@@ -4736,6 +4792,10 @@ Other shift and rotate instructions, analogous to the
 Vector shift and rotate instructions that take vectors as operand 2
 instead of a scalar type.
 
+@cindex @code{bswap@var{m}2} instruction pattern
+@item @samp{bswap@var{m}2}
+Reverse the order of bytes of operand 1 and store the result in operand 0.
+
 @cindex @code{neg@var{m}2} instruction pattern
 @cindex @code{ssneg@var{m}2} instruction pattern
 @cindex @code{usneg@var{m}2} instruction pattern
@@ -5609,6 +5669,13 @@ an error if the stack has overflowed.  The single operand is the address in
 the stack farthest from the current stack pointer that you need to validate.
 Normally, on platforms where this pattern is needed, you would obtain the
 stack limit from a global or thread-specific variable or register.
+
+@cindex @code{probe_stack_address} instruction pattern
+@item @samp{probe_stack_address}
+If stack checking (@pxref{Stack Checking}) can be done on your system by
+probing the stack but without the need to actually access it, define this
+pattern and signal an error if the stack has overflowed.  The single operand
+is the memory address in the stack that needs to be probed.
 
 @cindex @code{probe_stack} instruction pattern
 @item @samp{probe_stack}

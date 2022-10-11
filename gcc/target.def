@@ -1367,6 +1367,14 @@ DEFHOOK
  bool, (const_rtx addr),
  default_mode_dependent_address_p)
 
+/* Whether ADDR, a legitimate address expression for MODE, may be accessed
+   using a narrower mode for the purpose of an "offsettable" reference.  */
+DEFHOOK
+(may_narrow_access_to,
+ "",
+ bool, (rtx addr, enum machine_mode mode),
+ default_may_narrow_access_to)
+
 /* Given an invalid address X for a given machine mode, try machine-specific
    ways to make it legitimate.  Return X or an invalid address on failure.  */
 DEFHOOK
@@ -2276,6 +2284,14 @@ DEFHOOK
  "",
  tree, (tree type, tree expr),
  hook_tree_tree_tree_null)
+
+/* True if a structure, union or array with MODE containing FIELD should
+   be accessed using BLKmode.  */
+DEFHOOK
+(member_type_forces_blk,
+ "",
+ bool, (const_tree field, enum machine_mode mode),
+ default_member_type_forces_blk)
 
 /* Return the class for a secondary reload, and fill in extra information.  */
 DEFHOOK

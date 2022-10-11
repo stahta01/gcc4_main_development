@@ -111,7 +111,7 @@ along with GCC; see the file COPYING3.  If not see
   "%{!symbolic:\
      %{pthreads|pthread:-lpthread} \
      %{pthreads|pthread|fprofile-generate*:" LIB_TLS_SPEC "} \
-     %{p|pg:-ldl} -lc}"
+     %{p|pg:-ldl -lgnatmon} -lc}"
 
 #ifndef CROSS_DIRECTORY_STRUCTURE
 #undef MD_EXEC_PREFIX
@@ -134,7 +134,7 @@ along with GCC; see the file COPYING3.  If not see
 			 %{!symbolic: \
 			  %{p:mcrt1.o%s} \
                           %{!p: \
-	                    %{pg:gcrt1.o%s gmon.o%s} \
+	                    %{pg:gcrt1.o%s} \
                             %{!pg:crt1.o%s}}}} \
 			crti.o%s %(startfile_arch) \
 			crtbegin.o%s"

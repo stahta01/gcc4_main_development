@@ -18,7 +18,7 @@
 
 MULTILIB_OPTIONS = \
   mrtp fPIC \
-  t4/t4be/t4t/t4tbe/t5/t5be/t5t/t5tbe/tstrongarm/txscale/txscalebe
+  t4/t4be/t4t/t4tbe/t5/t5be/t5t/t5tbe/tstrongarm/txscale/txscalebe/t7/t7be/t7t2/t7t2be
 MULTILIB_MATCHES = fPIC=fpic
 # Don't build -fPIC multilibs for kernel or Thumb code.
-MULTILIB_EXCEPTIONS = fPIC* mrtp/fPIC/*t[45]t*
+MULTILIB_EXCEPTIONS = fPIC* mrtp/fPIC/*t[457]t*

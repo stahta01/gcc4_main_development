@@ -501,6 +501,9 @@ struct GTY(()) tree_common {
        CASE_LOW_SEEN in
            CASE_LABEL_EXPR
 
+       GOTO_LOOP_NO_UNROLL in
+           GOTO_EXPR
+
    static_flag:
 
        TREE_STATIC in
@@ -540,6 +543,9 @@ struct GTY(()) tree_common {
        TRANSACTION_EXPR_OUTER in
 	   TRANSACTION_EXPR
 
+       GOTO_LOOP_UNROLL in
+           GOTO_EXPR
+
    public_flag:
 
        TREE_OVERFLOW in
@@ -570,6 +576,12 @@ struct GTY(()) tree_common {
        TRANSACTION_EXPR_RELAXED in
 	   TRANSACTION_EXPR
 
+       GOTO_LOOP_NO_VECTOR in
+           GOTO_EXPR
+
+       CONSTRUCTOR_NOCLEAR in
+           CONSTRUCTOR
+
    private_flag:
 
        TREE_PRIVATE in
@@ -588,6 +600,9 @@ struct GTY(()) tree_common {
 
        TYPE_REF_IS_RVALUE in
 	   REFERENCE_TYPE
+
+       GOTO_LOOP_VECTOR in
+           GOTO_EXPR
 
    protected_flag:
 
@@ -687,8 +702,20 @@ struct GTY(()) tree_common {
 
    saturating_flag:
 
+       TYPE_REVERSE_STORAGE_ORDER in
+           RECORD_TYPE, UNION_TYPE, QUAL_UNION_TYPE, ARRAY_TYPE
+
        TYPE_SATURATING in
-           all types
+           other types
+
+       REF_REVERSE_STORAGE_ORDER in
+           BIT_FIELD_REF, MEM_REF
+
+       FUNC_ADDR_BY_DESCRIPTOR in
+           ADDR_EXPR
+
+       CALL_EXPR_BY_DESCRIPTOR in
+           CALL_EXPR
 
    nowarning_flag:
 
@@ -706,6 +733,9 @@ struct GTY(()) tree_common {
 
        SSA_NAME_IS_DEFAULT_DEF in
            SSA_NAME
+
+       DECL_NONLOCAL_FRAME in
+	   VAR_DECL
 */
 
 #undef DEFTREESTRUCT
@@ -1396,18 +1426,13 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
   (TREE_CHECK3 (NODE, VAR_DECL, PARM_DECL, \
 		RESULT_DECL)->decl_common.decl_by_reference_flag)
 
-/* In a RESULT_DECL, PARM_DECL and VAR_DECL, means that this decl
-   can be used as restricted tag to disambiguate against other restrict
-   pointers.  Used by fortran to capture something like non-addressability
-   (which it isn't really because the middle-end does take addresses of
-   such variables).  */
-#define DECL_RESTRICTED_P(NODE) \
-  (TREE_CHECK3 (NODE, VAR_DECL, PARM_DECL, \
-		RESULT_DECL)->decl_common.decl_restricted_flag)
-
+/* In VAR_DECL and PARM_DECL, set when the decl has been used except for
+   being set.  */
 #define DECL_READ_P(NODE) \
   (TREE_CHECK2 (NODE, VAR_DECL, PARM_DECL)->decl_common.decl_read_flag)
 
+/* In VAR_DECL or RESULT_DECL, set when significant code movement precludes
+   attempting to share the stack slot with some other variable.  */
 #define DECL_NONSHAREABLE(NODE) \
   (TREE_CHECK2 (NODE, VAR_DECL, \
 		RESULT_DECL)->decl_common.decl_nonshareable_flag)
@@ -1451,8 +1476,39 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
 #define IDENTIFIER_TRANSPARENT_ALIAS(NODE) \
   (IDENTIFIER_NODE_CHECK (NODE)->base.deprecated_flag)
 
-/* In fixed-point types, means a saturating type.  */
-#define TYPE_SATURATING(NODE) ((NODE)->base.saturating_flag)
+/* In an aggregate type, indicates that the scalar fields of the type are
+   stored in reverse order from the target order.  This effectively
+   toggles BYTES_BIG_ENDIAN and WORDS_BIG_ENDIAN within the type.  */
+#define TYPE_REVERSE_STORAGE_ORDER(NODE) \
+  (TREE_CHECK4 (NODE, RECORD_TYPE, UNION_TYPE, QUAL_UNION_TYPE, ARRAY_TYPE)->base.saturating_flag)
+
+/* In a non-aggregate type, indicates a saturating type.  */
+#define TYPE_SATURATING(NODE) \
+  (TREE_NOT_CHECK4 (NODE, RECORD_TYPE, UNION_TYPE, QUAL_UNION_TYPE, ARRAY_TYPE)->base.saturating_flag)
+
+/* In a BIT_FIELD_REF and MEM_REF, indicates that the reference is to a group
+   of bits stored in reverse order from the target order.  This effectively
+   toggles both BYTES_BIG_ENDIAN and WORDS_BIG_ENDIAN for the reference.
+
+   The overall strategy is to preserve the invariant that every scalar in
+   memory is associated with a single storage order, i.e. all accesses to
+   this scalar are done with the same storage order.  This invariant makes
+   it possible to factor out the storage order in most transformations, as
+   only the address and/or the value (in target order) matter for them.
+   But, of course, the storage order must be preserved when the accesses
+   themselves are rewritten or transformed.  */
+#define REF_REVERSE_STORAGE_ORDER(NODE) \
+  (TREE_CHECK2 (NODE, BIT_FIELD_REF, MEM_REF)->base.saturating_flag)
+
+/* In an ADDR_EXPR, indicates that this is a pointer to nested function
+   represented by a descriptor instead of a trampoline.  */
+#define FUNC_ADDR_BY_DESCRIPTOR(NODE) \
+  (TREE_CHECK (NODE, ADDR_EXPR)->base.saturating_flag)
+
+/* In a CALL_EXPR, indicates that this is an indirect call for which
+   pointers to nested function are descriptors instead of trampolines.  */
+#define CALL_EXPR_BY_DESCRIPTOR(NODE) \
+  (TREE_CHECK (NODE, CALL_EXPR)->base.saturating_flag)
 
 /* These flags are available for each language front end to use internally.  */
 #define TREE_LANG_FLAG_0(NODE) ((NODE)->base.lang_flag_0)
@@ -1597,6 +1653,7 @@ struct GTY(()) tree_vec {
   (VEC_index (constructor_elt, CONSTRUCTOR_ELTS (NODE), IDX))
 #define CONSTRUCTOR_NELTS(NODE) \
   (VEC_length (constructor_elt, CONSTRUCTOR_ELTS (NODE)))
+#define CONSTRUCTOR_NOCLEAR(NODE) (CONSTRUCTOR_CHECK (NODE)->base.public_flag)
 
 /* Iterate through the vector V of CONSTRUCTOR_ELT elements, yielding the
    value of each element (stored within VAL). IX must be a scratch variable
@@ -1687,7 +1744,10 @@ struct GTY(()) tree_constructor {
    return nothing.  */
 #define EXPR_LOCATION(NODE) \
   (EXPR_P ((NODE)) ? (NODE)->exp.locus : UNKNOWN_LOCATION)
+#define EXPR_LOCATIONS(NODE) expr_locations ((NODE))
 #define SET_EXPR_LOCATION(NODE, LOCUS) EXPR_CHECK ((NODE))->exp.locus = (LOCUS)
+#define SET_EXPR_LOCATION2(NODE, FROM) set_expr_location2 ((NODE), (FROM))
+#define SET_EXPR_LOCATIONS(NODE, FROM, LENGTH) set_expr_locations ((NODE), (FROM), (LENGTH))
 #define EXPR_HAS_LOCATION(NODE) (EXPR_LOCATION (NODE) != UNKNOWN_LOCATION)
 #define EXPR_LOC_OR_HERE(NODE) (EXPR_HAS_LOCATION (NODE) ? (NODE)->exp.locus : input_location)
 #define EXPR_FILENAME(NODE) LOCATION_FILE (EXPR_CHECK ((NODE))->exp.locus)
@@ -1698,6 +1758,11 @@ struct GTY(()) tree_constructor {
 #define CAN_HAVE_LOCATION_P(NODE) ((NODE) && EXPR_P (NODE))
 
 extern void protected_set_expr_location (tree, location_t);
+extern location_t *expr_locations (const_tree);
+extern location_t expr_location_n (const_tree, int);
+extern void set_expr_location2 (tree, location_t);
+extern void set_expr_locations (tree, location_t *, int);
+extern void duplicate_expr_locations (tree, tree);
 
 /* In a TARGET_EXPR node.  */
 #define TARGET_EXPR_SLOT(NODE) TREE_OPERAND_CHECK_CODE (NODE, TARGET_EXPR, 0)
@@ -1746,6 +1811,26 @@ extern void protected_set_expr_location (tree, location_t);
 /* GOTO_EXPR accessor. This gives access to the label associated with
    a goto statement.  */
 #define GOTO_DESTINATION(NODE)  TREE_OPERAND ((NODE), 0)
+
+/* Set on a GOTO_EXPR if it is the latch goto of a loop that must not be
+   unrolled.  */
+#define GOTO_LOOP_NO_UNROLL(NODE) \
+  (GOTO_EXPR_CHECK(NODE)->base.addressable_flag)
+
+/* Set on a GOTO_EXPR if it is the latch goto of a loop that should be
+   unrolled.  */
+#define GOTO_LOOP_UNROLL(NODE) \
+  (GOTO_EXPR_CHECK(NODE)->base.static_flag)
+
+/* Set on a GOTO_EXPR if it is the latch goto of a loop that must not be
+   vectorized.  */
+#define GOTO_LOOP_NO_VECTOR(NODE) \
+  (GOTO_EXPR_CHECK(NODE)->base.public_flag)
+
+/* Set on a GOTO_EXPR if it is the latch goto of a loop that should be
+   vectorized.  */
+#define GOTO_LOOP_VECTOR(NODE) \
+  (GOTO_EXPR_CHECK(NODE)->base.private_flag)
 
 /* ASM_EXPR accessors. ASM_STRING returns a STRING_CST for the
    instruction (e.g., "mov x, y"). ASM_OUTPUTS, ASM_INPUTS, and
@@ -2128,6 +2213,11 @@ struct GTY(()) tree_omp_clause {
 
 #define BLOCK_SOURCE_LOCATION(NODE) (BLOCK_CHECK (NODE)->block.locus)
 
+/* This gives the location of the end of the block, useful to attach
+   code implicitly generated for outgoing paths.  */
+
+#define BLOCK_SOURCE_END_LOCATION(NODE) (BLOCK_CHECK (NODE)->block.end_locus)
+
 struct GTY(()) tree_block {
   struct tree_base base;
   tree chain;
@@ -2136,6 +2226,7 @@ struct GTY(()) tree_block {
   unsigned block_num : 31;
 
   location_t locus;
+  location_t end_locus;
 
   tree vars;
   VEC(tree,gc) *nonlocalized_vars;
@@ -2244,8 +2335,8 @@ extern enum machine_mode vector_type_mode (const_tree);
    get one debug info record for them.  */
 #define TYPE_STUB_DECL(NODE) (TREE_CHAIN (TYPE_CHECK (NODE)))
 
-/* In a RECORD_TYPE, UNION_TYPE or QUAL_UNION_TYPE, it means the type
-   has BLKmode only because it lacks the alignment requirement for
+/* In a RECORD_TYPE, UNION_TYPE, QUAL_UNION_TYPE or ARRAY_TYPE, it means
+   the type has BLKmode only because it lacks the alignment required for
    its size.  */
 #define TYPE_NO_FORCE_BLK(NODE) \
   (TYPE_CHECK (NODE)->type_common.no_force_blk_flag)
@@ -2910,26 +3001,22 @@ struct GTY(()) tree_decl_common {
      In VAR_DECL, PARM_DECL and RESULT_DECL, this is
      DECL_HAS_VALUE_EXPR_P.  */
   unsigned decl_flag_2 : 1;
+  /* 1 bit unused.  */
+  unsigned decl_flag_3 : 1;
   /* Logically, these two would go in a theoretical base shared by var and
      parm decl. */
   unsigned gimple_reg_flag : 1;
   /* In VAR_DECL, PARM_DECL and RESULT_DECL, this is DECL_BY_REFERENCE.  */
   unsigned decl_by_reference_flag : 1;
-  /* In VAR_DECL, PARM_DECL and RESULT_DECL, this is DECL_RESTRICTED_P.  */
-  unsigned decl_restricted_flag : 1;
-
-  /* In VAR_DECL and PARM_DECL set when the decl has been used except for
-     being set.  */
+  /* In a VAR_DECL and PARM_DECL, this is DECL_READ_P.  */
   unsigned decl_read_flag : 1;
-
-  /* In VAR_DECL or RESULT_DECL set when significant code movement precludes
-     attempting to share the stack slot with some other variable.  */
+  /* In a VAR_DECL or RESULT_DECL, this is DECL_NONSHAREABLE.  */
   unsigned decl_nonshareable_flag : 1;
 
   /* DECL_OFFSET_ALIGN, used only for FIELD_DECLs.  */
   unsigned int off_align : 8;
 
-  /* 24-bits unused.  */
+  /* 24 bits unused.  */
 
   /* DECL_ALIGN.  It should have the same size as TYPE_ALIGN.  */
   unsigned int align;
@@ -3343,6 +3430,10 @@ extern void decl_fini_priority_insert (tree, priority_type);
    libraries.  */
 #define MAX_RESERVED_INIT_PRIORITY 100
 
+/* In a VAR_DECL, nonzero if this is a non-local frame structure.  */
+#define DECL_NONLOCAL_FRAME(NODE)  \
+  (VAR_DECL_CHECK (NODE)->base.default_def_flag)
+
 #define DECL_VAR_ANN_PTR(NODE) \
   (TREE_CODE (NODE) == VAR_DECL ? &(NODE)->var_decl.ann \
    : TREE_CODE (NODE) == PARM_DECL ? &(NODE)->parm_decl.ann \
@@ -3746,6 +3837,7 @@ enum tree_index
   TI_UINTDI_TYPE,
   TI_UINTTI_TYPE,
 
+  TI_UINT16_TYPE,
   TI_UINT32_TYPE,
   TI_UINT64_TYPE,
 
@@ -3901,6 +3993,7 @@ extern GTY(()) tree global_trees[TI_MAX];
 #define unsigned_intDI_type_node	global_trees[TI_UINTDI_TYPE]
 #define unsigned_intTI_type_node	global_trees[TI_UINTTI_TYPE]
 
+#define uint16_type_node		global_trees[TI_UINT16_TYPE]
 #define uint32_type_node		global_trees[TI_UINT32_TYPE]
 #define uint64_type_node		global_trees[TI_UINT64_TYPE]
 
@@ -4915,10 +5008,15 @@ extern tree staticp (tree);
 
 extern tree save_expr (tree);
 
-/* Look inside EXPR and into any simple arithmetic operations.  Return
-   the innermost non-arithmetic node.  */
+/* Look inside EXPR into any simple arithmetic operations.  Return the
+   outermost non-arithmetic or non-invariant node.  */
 
 extern tree skip_simple_arithmetic (tree);
+
+/* Look inside EXPR into simple arithmetic operations involving constants.
+   Return the outermost non-arithmetic or non-constant node.  */
+
+extern tree skip_simple_constant_arithmetic (tree);
 
 /* Return which tree structure is used by T.  */
 
@@ -5047,7 +5145,7 @@ handled_component_p (const_tree t)
 
 extern tree get_inner_reference (tree, HOST_WIDE_INT *, HOST_WIDE_INT *,
 				 tree *, enum machine_mode *, int *, int *,
-				 bool);
+				 int *, bool);
 
 /* Given an expression EXP that may be a COMPONENT_REF, an ARRAY_REF or an
    ARRAY_RANGE_REF, look for whether EXP or any nested component-refs within
@@ -5245,8 +5343,11 @@ struct_ptr_hash (const void *a)
 extern int folding_initializer;
 
 /* Convert between trees and native memory representation.  */
-extern int native_encode_expr (const_tree, unsigned char *, int);
+extern int native_encode_expr (const_tree, unsigned char *, int, bool);
 extern tree native_interpret_expr (tree, const unsigned char *, int);
+
+/* Flip storage order at compile-time.  */
+extern tree fold_flip_storage_order (tree);
 
 /* Fold constants as much as possible in an expression.
    Returns the simplified expression.
@@ -5568,6 +5669,10 @@ extern void print_vec_tree (FILE *, const char *, VEC(tree,gc) *, int);
 extern void print_node_brief (FILE *, const char *, const_tree, int);
 extern void indent_to (FILE *, int);
 #endif
+#define PRINT_DECL_ORIGIN       0x1
+#define PRINT_DECL_NAME         0x2
+#define PRINT_DECL_UNIQUE_NAME  0x4
+extern void print_decl_identifier (FILE *, tree, int flags);
 
 /* In tree-inline.c:  */
 extern bool debug_find_tree (tree, tree);
@@ -5612,6 +5717,8 @@ extern tree build_duplicate_type (tree);
 #define ECF_TM_PURE		  (1 << 11)
 /* Nonzero if this call is into the transaction runtime library.  */
 #define ECF_TM_BUILTIN		  (1 << 12)
+/* Nonzero if this is an indirect call by descriptor.  */
+#define ECF_BY_DESCRIPTOR	  (1 << 13)
 
 extern int flags_from_decl_or_type (const_tree);
 extern int call_expr_flags (const_tree);

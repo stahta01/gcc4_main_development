@@ -2029,7 +2029,7 @@ perform_koenig_lookup (tree fn, VEC(tree,gc) *args, bool include_std,
 
 tree
 finish_call_expr (tree fn, VEC(tree,gc) **args, bool disallow_virtual,
-		  bool koenig_p, tsubst_flags_t complain)
+		  bool koenig_p, tsubst_flags_t complain, location_t loc)
 {
   tree result;
   tree orig_fn;
@@ -2098,7 +2098,7 @@ finish_call_expr (tree fn, VEC(tree,gc) **args, bool disallow_virtual,
                                          ? LOOKUP_NORMAL | LOOKUP_NONVIRTUAL
 					 : LOOKUP_NORMAL),
 					/*fn_p=*/NULL,
-					complain);
+					complain, loc);
 	}
     }
 
@@ -2148,7 +2148,7 @@ finish_call_expr (tree fn, VEC(tree,gc) **args, bool disallow_virtual,
 				       ? LOOKUP_NORMAL|LOOKUP_NONVIRTUAL
 				       : LOOKUP_NORMAL),
 				      /*fn_p=*/NULL,
-				      complain);
+				      complain, loc);
     }
   else if (is_overloaded_fn (fn))
     {
@@ -3224,6 +3224,8 @@ finish_id_expression (tree id_expression,
 	      decl = finish_non_static_data_member
 		       (decl, NULL_TREE,
 			/*qualifying_scope=*/NULL_TREE);
+	      if (EXPR_P (decl))
+		SET_EXPR_LOCATION (decl, location);
 	      pop_deferring_access_checks ();
 	      return decl;
 	    }
@@ -3312,6 +3314,8 @@ finish_id_expression (tree id_expression,
 	  push_deferring_access_checks (dk_no_check);
 	  decl = finish_non_static_data_member (decl, NULL_TREE,
 						/*qualifying_scope=*/NULL_TREE);
+	  if (EXPR_P (decl))
+	    SET_EXPR_LOCATION (decl, location);
 	  pop_deferring_access_checks ();
 	}
       else if (is_overloaded_fn (decl))
@@ -4985,7 +4989,8 @@ finish_omp_barrier (void)
 {
   tree fn = builtin_decl_explicit (BUILT_IN_GOMP_BARRIER);
   VEC(tree,gc) *vec = make_tree_vector ();
-  tree stmt = finish_call_expr (fn, &vec, false, false, tf_warning_or_error);
+  tree stmt = finish_call_expr (fn, &vec, false, false, tf_warning_or_error,
+				input_location);
   release_tree_vector (vec);
   finish_expr_stmt (stmt);
 }
@@ -4995,7 +5000,8 @@ finish_omp_flush (void)
 {
   tree fn = builtin_decl_explicit (BUILT_IN_SYNC_SYNCHRONIZE);
   VEC(tree,gc) *vec = make_tree_vector ();
-  tree stmt = finish_call_expr (fn, &vec, false, false, tf_warning_or_error);
+  tree stmt = finish_call_expr (fn, &vec, false, false, tf_warning_or_error,
+				input_location);
   release_tree_vector (vec);
   finish_expr_stmt (stmt);
 }
@@ -5005,7 +5011,8 @@ finish_omp_taskwait (void)
 {
   tree fn = builtin_decl_explicit (BUILT_IN_GOMP_TASKWAIT);
   VEC(tree,gc) *vec = make_tree_vector ();
-  tree stmt = finish_call_expr (fn, &vec, false, false, tf_warning_or_error);
+  tree stmt = finish_call_expr (fn, &vec, false, false, tf_warning_or_error,
+				input_location);
   release_tree_vector (vec);
   finish_expr_stmt (stmt);
 }
@@ -5015,7 +5022,8 @@ finish_omp_taskyield (void)
 {
   tree fn = builtin_decl_explicit (BUILT_IN_GOMP_TASKYIELD);
   VEC(tree,gc) *vec = make_tree_vector ();
-  tree stmt = finish_call_expr (fn, &vec, false, false, tf_warning_or_error);
+  tree stmt = finish_call_expr (fn, &vec, false, false, tf_warning_or_error,
+				input_location);
   release_tree_vector (vec);
   finish_expr_stmt (stmt);
 }

@@ -31,8 +31,19 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
     }								\
   while (0)
 
+#if TARGET_64BIT_DEFAULT
+#define SPEC_32 "m32"
+#define SPEC_64 "m32|mx32:;"
+#define SPEC_X32 "mx32"
+#else
+#define SPEC_32 "m64|mx32:;"
+#define SPEC_64 "m64"
+#define SPEC_X32 "mx32"
+#endif
+
 #undef CPP_SPEC
-#define CPP_SPEC "%{posix:-D_POSIX_SOURCE} %{pthread:-D_REENTRANT}"
+#define CPP_SPEC "%{posix:-D_POSIX_SOURCE} %{pthread:-D_REENTRANT}" \
+ " %{" SPEC_64 ":-isystem /usr/include/x86_64-linux-gnu}"
 
 #undef CC1_SPEC
 #define CC1_SPEC "%(cc1_cpu) %{profile:-p}"
@@ -56,21 +67,17 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
    When the -shared link option is used a final link is not being
    done.  */
 
-#if TARGET_64BIT_DEFAULT
-#define SPEC_32 "m32"
-#define SPEC_64 "m32|mx32:;"
-#define SPEC_X32 "mx32"
-#else
-#define SPEC_32 "m64|mx32:;"
-#define SPEC_64 "m64"
-#define SPEC_X32 "mx32"
-#endif
-
 #undef ASM_SPEC
 #define ASM_SPEC "%{" SPEC_32 ":--32} \
  %{" SPEC_64 ":--64} \
  %{" SPEC_X32 ":--x32} \
  %{!mno-sse2avx:%{mavx:-msse2avx}} %{msse2avx:%{!mavx:-msse2avx}}"
+
+/* For debian and ubuntu.  */
+#if TARGET_64BIT_DEFAULT
+#undef MD_STARTFILE_PREFIX
+#define MD_STARTFILE_PREFIX "/usr/lib/x86_64-linux-gnu/"
+#endif
 
 #undef	LINK_SPEC
 #define LINK_SPEC "%{" SPEC_64 ":-m " GNU_USER_LINK_EMULATION64 "} \

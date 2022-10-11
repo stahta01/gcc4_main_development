@@ -75,7 +75,8 @@ along with GCC; see the file COPYING3.  If not see
   while (0)
 
 #undef CPP_SPEC
-#define CPP_SPEC "%{posix:-D_POSIX_SOURCE} %{pthread:-D_REENTRANT}"
+#define CPP_SPEC "%{posix:-D_POSIX_SOURCE} %{pthread:-D_REENTRANT}" \
+  " -isystem /usr/include/i386-linux-gnu"
 
 #undef CC1_SPEC
 #define CC1_SPEC "%(cc1_cpu) %{profile:-p}"
@@ -96,6 +97,10 @@ along with GCC; see the file COPYING3.  If not see
 #define SUBTARGET_EXTRA_SPECS \
   { "link_emulation", GNU_USER_LINK_EMULATION },\
   { "dynamic_linker", GNU_USER_DYNAMIC_LINKER }
+
+/* For debian and ubuntu.  */
+#undef MD_STARTFILE_PREFIX
+#define MD_STARTFILE_PREFIX "/usr/lib/i386-linux-gnu/"
 
 #undef	LINK_SPEC
 #define LINK_SPEC "-m %(link_emulation) %{shared:-shared} \

@@ -279,13 +279,13 @@ get_object_alignment_1 (tree exp, unsigned HOST_WIDE_INT *bitposp)
   HOST_WIDE_INT bitsize, bitpos;
   tree offset;
   enum machine_mode mode;
-  int unsignedp, volatilep;
+  int unsignedp, reversep, volatilep;
   unsigned int align, inner;
 
   /* Get the innermost object and the constant (bitpos) and possibly
      variable (offset) offset of the access.  */
-  exp = get_inner_reference (exp, &bitsize, &bitpos, &offset,
-			     &mode, &unsignedp, &volatilep, true);
+  exp = get_inner_reference (exp, &bitsize, &bitpos, &offset, &mode,
+			     &unsignedp, &reversep, &volatilep, true);
 
   /* Extract alignment information from the innermost object and
      possibly adjust bitpos and offset.  */
@@ -2021,6 +2021,7 @@ expand_builtin_mathfn (tree exp, rtx target, rtx subtarget)
   tree fndecl = get_callee_fndecl (exp);
   enum machine_mode mode;
   bool errno_set = false;
+  bool try_widening = false;
   tree arg;
 
   if (!validate_arglist (exp, REAL_TYPE, VOID_TYPE))
@@ -2032,6 +2033,7 @@ expand_builtin_mathfn (tree exp, rtx target, rtx subtarget)
     {
     CASE_FLT_FN (BUILT_IN_SQRT):
       errno_set = ! tree_expr_nonnegative_p (arg);
+      try_widening = true;
       builtin_optab = sqrt_optab;
       break;
     CASE_FLT_FN (BUILT_IN_EXP):
@@ -2088,8 +2090,10 @@ expand_builtin_mathfn (tree exp, rtx target, rtx subtarget)
   if (! flag_errno_math || ! HONOR_NANS (mode))
     errno_set = false;
 
-  /* Before working hard, check whether the instruction is available.  */
-  if (optab_handler (builtin_optab, mode) != CODE_FOR_nothing
+  /* Before working hard, check whether the instruction is available, but try
+     to widen the mode for specific operations.  */
+  if ((optab_handler (builtin_optab, mode) != CODE_FOR_nothing
+       || (try_widening && !excess_precision_type (TREE_TYPE (exp))))
       && (!errno_set || !optimize_insn_for_size_p ()))
     {
       target = gen_reg_rtx (mode);
@@ -4626,13 +4630,15 @@ expand_builtin_alloca (tree exp, bool cannot_accumulate)
   return result;
 }
 
-/* Expand a call to a bswap builtin with argument ARG0.  MODE
-   is the mode to expand with.  */
+/* Expand a call to bswap builtin in EXP.
+   Return NULL_RTX if a normal call should be emitted rather than expanding the
+   function in-line.  If convenient, the result should be placed in TARGET.
+   SUBTARGET may be used as the target for computing one of EXP's operands.  */
 
 static rtx
-expand_builtin_bswap (tree exp, rtx target, rtx subtarget)
+expand_builtin_bswap (enum machine_mode target_mode, tree exp, rtx target,
+		      rtx subtarget)
 {
-  enum machine_mode mode;
   tree arg;
   rtx op0;
 
@@ -4640,14 +4646,18 @@ expand_builtin_bswap (tree exp, rtx target, rtx subtarget)
     return NULL_RTX;
 
   arg = CALL_EXPR_ARG (exp, 0);
-  mode = TYPE_MODE (TREE_TYPE (arg));
-  op0 = expand_expr (arg, subtarget, VOIDmode, EXPAND_NORMAL);
+  op0 = expand_expr (arg,
+		     subtarget && GET_MODE (subtarget) == target_mode
+		     ? subtarget : NULL_RTX,
+		     target_mode, EXPAND_NORMAL);
+  if (GET_MODE (op0) != target_mode)
+    op0 = convert_to_mode (target_mode, op0, 1);
 
-  target = expand_unop (mode, bswap_optab, op0, target, 1);
+  target = expand_unop (target_mode, bswap_optab, op0, target, 1);
 
   gcc_assert (target);
 
-  return convert_to_mode (mode, target, 0);
+  return convert_to_mode (target_mode, target, 1);
 }
 
 /* Expand a call to a unary builtin in EXP.
@@ -4940,8 +4950,9 @@ expand_builtin_init_trampoline (tree exp, bool onstack)
     {
       trampolines_created = 1;
 
-      warning_at (DECL_SOURCE_LOCATION (t_func), OPT_Wtrampolines,
-		  "trampoline generated for nested function %qD", t_func);
+      if (USE_RUNTIME_DESCRIPTORS != 0)
+	warning_at (DECL_SOURCE_LOCATION (t_func), OPT_Wtrampolines,
+		    "trampoline generated for nested function %qD", t_func);
     }
 
   return const0_rtx;
@@ -4961,6 +4972,54 @@ expand_builtin_adjust_trampoline (tree exp)
     tramp = targetm.calls.trampoline_adjust_address (tramp);
 
   return tramp;
+}
+
+/* Expand a call to the builtin descriptor initialization routine.
+   A descriptor is made up of a couple of pointers to the static
+   chain and the code entry in this order.  */
+
+static rtx
+expand_builtin_init_descriptor (tree exp)
+{
+  tree t_descr, t_func, t_chain;
+  rtx m_descr, r_descr, r_func, r_chain;
+
+  if (!validate_arglist (exp, POINTER_TYPE, POINTER_TYPE, POINTER_TYPE,
+			 VOID_TYPE))
+    return NULL_RTX;
+
+  t_descr = CALL_EXPR_ARG (exp, 0);
+  t_func = CALL_EXPR_ARG (exp, 1);
+  t_chain = CALL_EXPR_ARG (exp, 2);
+
+  r_descr = expand_normal (t_descr);
+  m_descr = gen_rtx_MEM (BLKmode, r_descr);
+  MEM_NOTRAP_P (m_descr) = 1;
+
+  r_func = expand_normal (t_func);
+  r_chain = expand_normal (t_chain);
+
+  /* Generate insns to initialize the descriptor.  */
+  emit_move_insn (adjust_address_nv (m_descr, Pmode, 0), r_chain);
+  emit_move_insn (adjust_address_nv (m_descr, Pmode, UNITS_PER_WORD), r_func);
+
+  return const0_rtx;
+}
+
+/* Expand a call to the builtin descriptor adjustment routine.  */
+
+static rtx
+expand_builtin_adjust_descriptor (tree exp)
+{
+  rtx tramp;
+
+  if (!validate_arglist (exp, POINTER_TYPE, VOID_TYPE))
+    return NULL_RTX;
+
+  tramp = expand_normal (CALL_EXPR_ARG (exp, 0));
+
+  /* Unalign the descriptor to allow runtime identification.  */
+  return force_operand (plus_constant (tramp, 1), NULL_RTX);
 }
 
 /* Expand the call EXP to the built-in signbit, signbitf or signbitl
@@ -6084,10 +6143,10 @@ expand_builtin (tree exp, rtx target, rtx subtarget, enum machine_mode mode,
       expand_stack_restore (CALL_EXPR_ARG (exp, 0));
       return const0_rtx;
 
+    case BUILT_IN_BSWAP16:
     case BUILT_IN_BSWAP32:
     case BUILT_IN_BSWAP64:
-      target = expand_builtin_bswap (exp, target, subtarget);
-
+      target = expand_builtin_bswap (target_mode, exp, target, subtarget);
       if (target)
 	return target;
       break;
@@ -6371,6 +6430,11 @@ expand_builtin (tree exp, rtx target, rtx subtarget, enum machine_mode mode,
       return expand_builtin_init_trampoline (exp, false);
     case BUILT_IN_ADJUST_TRAMPOLINE:
       return expand_builtin_adjust_trampoline (exp);
+
+    case BUILT_IN_INIT_DESCRIPTOR:
+      return expand_builtin_init_descriptor (exp);
+    case BUILT_IN_ADJUST_DESCRIPTOR:
+      return expand_builtin_adjust_descriptor (exp);
 
     case BUILT_IN_FORK:
     case BUILT_IN_EXECL:
@@ -8176,7 +8240,7 @@ fold_builtin_bitop (tree fndecl, tree arg)
   return NULL_TREE;
 }
 
-/* Fold function call to builtin_bswap and the long and long long
+/* Fold function call to builtin_bswap and the short, long and long long
    variants.  Return NULL_TREE if no simplification can be made.  */
 static tree
 fold_builtin_bswap (tree fndecl, tree arg)
@@ -8189,15 +8253,15 @@ fold_builtin_bswap (tree fndecl, tree arg)
     {
       HOST_WIDE_INT hi, width, r_hi = 0;
       unsigned HOST_WIDE_INT lo, r_lo = 0;
-      tree type;
+      tree type = TREE_TYPE (TREE_TYPE (fndecl));
 
-      type = TREE_TYPE (arg);
       width = TYPE_PRECISION (type);
       lo = TREE_INT_CST_LOW (arg);
       hi = TREE_INT_CST_HIGH (arg);
 
       switch (DECL_FUNCTION_CODE (fndecl))
 	{
+	  case BUILT_IN_BSWAP16:
 	  case BUILT_IN_BSWAP32:
 	  case BUILT_IN_BSWAP64:
 	    {
@@ -8227,9 +8291,9 @@ fold_builtin_bswap (tree fndecl, tree arg)
 	}
 
       if (width < HOST_BITS_PER_WIDE_INT)
-	return build_int_cst (TREE_TYPE (TREE_TYPE (fndecl)), r_lo);
+	return build_int_cst (type, r_lo);
       else
-	return build_int_cst_wide (TREE_TYPE (TREE_TYPE (fndecl)), r_lo, r_hi);
+	return build_int_cst_wide (type, r_lo, r_hi);
     }
 
   return NULL_TREE;
@@ -8792,13 +8856,14 @@ fold_builtin_memory_op (location_t loc, tree dest, tree src,
 	      HOST_WIDE_INT src_offset = 0, dest_offset = 0;
 	      HOST_WIDE_INT size = -1;
 	      HOST_WIDE_INT maxsize = -1;
+	      bool reverse;
 
 	      srcvar = TREE_OPERAND (src, 0);
 	      src_base = get_ref_base_and_extent (srcvar, &src_offset,
-						  &size, &maxsize);
+						  &size, &maxsize, &reverse);
 	      destvar = TREE_OPERAND (dest, 0);
 	      dest_base = get_ref_base_and_extent (destvar, &dest_offset,
-						   &size, &maxsize);
+						   &size, &maxsize, &reverse);
 	      if (host_integerp (len, 1))
 		maxsize = tree_low_cst (len, 1);
 	      else
@@ -8877,6 +8942,12 @@ fold_builtin_memory_op (location_t loc, tree dest, tree src,
       if (!POINTER_TYPE_P (TREE_TYPE (src))
 	  || !POINTER_TYPE_P (TREE_TYPE (dest)))
 	return NULL_TREE;
+      /* In the following try to find a type that is most natural to be
+	 used for the memcpy source and destination and that allows
+	 the most optimization when memcpy is turned into a plain assignment
+	 using that type.  In theory we could always use a char[len] type
+	 but that only gains us that the destination and source possibly
+	 no longer will have their address taken.  */
       /* As we fold (void *)(p + CST) to (void *)p + CST undo this here.  */
       if (TREE_CODE (src) == POINTER_PLUS_EXPR)
 	{
@@ -8910,6 +8981,41 @@ fold_builtin_memory_op (location_t loc, tree dest, tree src,
 	}
       if (TREE_ADDRESSABLE (srctype)
 	  || TREE_ADDRESSABLE (desttype))
+	return NULL_TREE;
+
+      /* Make sure we are not copying using a floating-point mode or
+         a type whose size possibly does not match its precision.  */
+      if (FLOAT_MODE_P (TYPE_MODE (desttype))
+	  || TREE_CODE (desttype) == BOOLEAN_TYPE
+	  || TREE_CODE (desttype) == ENUMERAL_TYPE)
+	{
+	  /* A more suitable int_mode_for_mode would return a vector
+	     integer mode for a vector float mode or a integer complex
+	     mode for a float complex mode if there isn't a regular
+	     integer mode covering the mode of desttype.  */
+	  enum machine_mode mode = int_mode_for_mode (TYPE_MODE (desttype));
+	  if (mode == BLKmode)
+	    desttype = NULL_TREE;
+	  else
+	    desttype = build_nonstandard_integer_type (GET_MODE_BITSIZE (mode),
+						       1);
+	}
+      if (FLOAT_MODE_P (TYPE_MODE (srctype))
+	  || TREE_CODE (srctype) == BOOLEAN_TYPE
+	  || TREE_CODE (srctype) == ENUMERAL_TYPE)
+	{
+	  enum machine_mode mode = int_mode_for_mode (TYPE_MODE (srctype));
+	  if (mode == BLKmode)
+	    srctype = NULL_TREE;
+	  else
+	    srctype = build_nonstandard_integer_type (GET_MODE_BITSIZE (mode),
+						      1);
+	}
+      if (!srctype)
+	srctype = desttype;
+      if (!desttype)
+	desttype = srctype;
+      if (!srctype)
 	return NULL_TREE;
 
       src_align = get_pointer_alignment (src);
@@ -10591,6 +10697,7 @@ fold_builtin_1 (location_t loc, tree fndecl, tree arg0, bool ignore)
     CASE_FLT_FN (BUILT_IN_LLRINT):
       return fold_fixed_mathfn (loc, fndecl, arg0);
 
+    case BUILT_IN_BSWAP16:
     case BUILT_IN_BSWAP32:
     case BUILT_IN_BSWAP64:
       return fold_builtin_bswap (fndecl, arg0);
@@ -14274,11 +14381,9 @@ set_builtin_user_assembler_name (tree decl, const char *asmspec)
     {
     case BUILT_IN_MEMCPY:
       init_block_move_fn (asmspec);
-      memcpy_libfunc = set_user_assembler_libfunc ("memcpy", asmspec);
       break;
     case BUILT_IN_MEMSET:
       init_block_clear_fn (asmspec);
-      memset_libfunc = set_user_assembler_libfunc ("memset", asmspec);
       break;
     case BUILT_IN_MEMMOVE:
       memmove_libfunc = set_user_assembler_libfunc ("memmove", asmspec);
@@ -14355,6 +14460,7 @@ is_inexpensive_builtin (tree decl)
       case BUILT_IN_ABS:
       case BUILT_IN_ALLOCA:
       case BUILT_IN_ALLOCA_WITH_ALIGN:
+      case BUILT_IN_BSWAP16:
       case BUILT_IN_BSWAP32:
       case BUILT_IN_BSWAP64:
       case BUILT_IN_CLZ:

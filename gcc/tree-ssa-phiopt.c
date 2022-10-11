@@ -1642,12 +1642,11 @@ cond_if_else_store_replacement (basic_block then_bb, basic_block else_bb,
   return ok;
 }
 
-/* Always do these optimizations if we have SSA
-   trees to work on.  */
+/* Run phi-node optimizers unless we are to preserve control flow.  */
 static bool
 gate_phiopt (void)
 {
-  return 1;
+  return !flag_preserve_control_flow;
 }
 
 struct gimple_opt_pass pass_phiopt =

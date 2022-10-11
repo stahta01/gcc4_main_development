@@ -333,7 +333,8 @@ static void debug_free_queue (void);
 /* The debug hooks structure.  */
 #if defined (DBX_DEBUGGING_INFO)
 
-static void dbxout_source_line (unsigned int, const char *, int, bool);
+static void dbxout_source_line (unsigned int, const char *, unsigned int, int,
+			        bool);
 static void dbxout_begin_prologue (unsigned int, const char *);
 static void dbxout_source_file (const char *);
 static void dbxout_function_end (tree);
@@ -1295,7 +1296,7 @@ dbxout_begin_prologue (unsigned int lineno, const char *filename)
   /* pre-increment the scope counter */
   scope_labelno++;
 
-  dbxout_source_line (lineno, filename, 0, true);
+  dbxout_source_line (lineno, filename, 0, 0, true);
   /* Output function begin block at function scope, referenced
      by dbxout_block, dbxout_source_line and dbxout_function_end.  */
   emit_pending_bincls_if_required ();
@@ -1307,8 +1308,9 @@ dbxout_begin_prologue (unsigned int lineno, const char *filename)
 
 static void
 dbxout_source_line (unsigned int lineno, const char *filename,
-                    int discriminator ATTRIBUTE_UNUSED,
-                    bool is_stmt ATTRIBUTE_UNUSED)
+		   unsigned int col ATTRIBUTE_UNUSED,
+		   int discriminator ATTRIBUTE_UNUSED,
+		   bool is_stmt ATTRIBUTE_UNUSED)
 {
   dbxout_source_file (filename);
 
@@ -2508,11 +2510,11 @@ dbxout_expand_expr (tree expr)
 	enum machine_mode mode;
 	HOST_WIDE_INT bitsize, bitpos;
 	tree offset, tem;
-	int volatilep = 0, unsignedp = 0;
+	int unsignedp, reversep, volatilep = 0;
 	rtx x;
 
-	tem = get_inner_reference (expr, &bitsize, &bitpos, &offset,
-				   &mode, &unsignedp, &volatilep, true);
+	tem = get_inner_reference (expr, &bitsize, &bitpos, &offset, &mode,
+				   &unsignedp, &reversep, &volatilep, true);
 
 	x = dbxout_expand_expr (tem);
 	if (x == NULL || !MEM_P (x))

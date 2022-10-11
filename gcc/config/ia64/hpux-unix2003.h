@@ -4,5 +4,5 @@
 
 #undef STARTFILE_SPEC
 #define STARTFILE_SPEC "%{!shared:%{static:crt0%O%s} \
-			  %{mlp64:/usr/lib/hpux64/unix2003%O%s} \
-			  %{!mlp64:/usr/lib/hpux32/unix2003%O%s}}"
+			  %{" SPEC64_OPT ":/usr/lib/hpux64/unix2003%O%s} \
+			  %{" SPEC32_OPT ":/usr/lib/hpux32/unix2003%O%s}}"

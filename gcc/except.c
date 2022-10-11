@@ -897,7 +897,7 @@ assign_filter_values (void)
 static basic_block
 emit_to_new_bb_before (rtx seq, rtx insn)
 {
-  rtx last;
+  rtx next, last;
   basic_block bb;
   edge e;
   edge_iterator ei;
@@ -910,9 +910,19 @@ emit_to_new_bb_before (rtx seq, rtx insn)
       force_nonfallthru (e);
     else
       ei_next (&ei);
-  last = emit_insn_before (seq, insn);
+
+  /* Make sure to put the locator of INSN or a subsequent instruction on SEQ
+     to avoid inheriting the locator of the previous instruction.  */
+  next = insn;
+  while (next && !NONDEBUG_INSN_P (next))
+    next = NEXT_INSN (next);
+  if (next)
+    last = emit_insn_before_setloc (seq, insn, INSN_LOCATOR (next));
+  else
+    last = emit_insn_before (seq, insn);
   if (BARRIER_P (last))
     last = PREV_INSN (last);
+
   bb = create_basic_block (seq, last, BLOCK_FOR_INSN (insn)->prev_bb);
   update_bb_for_insn (bb);
   bb->flags |= BB_SUPERBLOCK;

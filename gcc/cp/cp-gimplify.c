@@ -33,6 +33,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "pointer-set.h"
 #include "flags.h"
 #include "splay-tree.h"
+#include "tree-pass.h"
+#include "c-family/c-xref.h"
 
 /* Local declarations.  */
 
@@ -1169,6 +1171,14 @@ cp_genericize (tree fndecl)
   cp_walk_tree (&DECL_SAVED_TREE (fndecl), cp_genericize_r, &wtd, NULL);
   pointer_set_destroy (wtd.p_set);
   VEC_free (tree, heap, wtd.bind_expr_stack);
+
+  /* Handle -fdump-xref.  */
+  if (flag_dump_xref && DECL_SAVED_TREE (fndecl))
+    {
+      extern int cpp_check (tree, cpp_operation);
+      traverse_tree_xref_cpp (fndecl, cpp_check, false);
+      generate_reference (fndecl, input_location, 't');
+    }
 
   /* Do everything else.  */
   c_genericize (fndecl);

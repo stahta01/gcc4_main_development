@@ -872,7 +872,12 @@ make_node_stat (enum tree_code code MEM_STAT_DECL)
 	{
 	  if (code == FUNCTION_DECL)
 	    {
-	      DECL_ALIGN (t) = FUNCTION_BOUNDARY;
+	      /* Force minimum alignment to use the least significant bit
+		 to distinguish descriptor addresses from code addresses.  */
+	      DECL_ALIGN (t)
+	        = (USE_RUNTIME_DESCRIPTORS == 1
+		   ? MAX (FUNCTION_BOUNDARY, 2 * BITS_PER_UNIT)
+		   : FUNCTION_BOUNDARY);
 	      DECL_MODE (t) = FUNCTION_MODE;
 	    }
 	  else
@@ -1795,7 +1800,7 @@ int
 integer_pow2p (const_tree expr)
 {
   int prec;
-  HOST_WIDE_INT high, low;
+  unsigned HOST_WIDE_INT high, low;
 
   STRIP_NOPS (expr);
 
@@ -2727,14 +2732,12 @@ save_expr (tree expr)
   return t;
 }
 
-/* Look inside EXPR and into any simple arithmetic operations.  Return
-   the innermost non-arithmetic node.  */
+/* Look inside EXPR into any simple arithmetic operations.  Return the
+   outermost non-arithmetic or non-invariant node.  */
 
 tree
 skip_simple_arithmetic (tree expr)
 {
-  tree inner;
-
   /* We don't care about whether this can be used as an lvalue in this
      context.  */
   while (TREE_CODE (expr) == NON_LVALUE_EXPR)
@@ -2744,17 +2747,16 @@ skip_simple_arithmetic (tree expr)
      a constant, it will be more efficient to not make another SAVE_EXPR since
      it will allow better simplification and GCSE will be able to merge the
      computations if they actually occur.  */
-  inner = expr;
-  while (1)
+  while (true)
     {
-      if (UNARY_CLASS_P (inner))
-	inner = TREE_OPERAND (inner, 0);
-      else if (BINARY_CLASS_P (inner))
+      if (UNARY_CLASS_P (expr))
+	expr = TREE_OPERAND (expr, 0);
+      else if (BINARY_CLASS_P (expr))
 	{
-	  if (tree_invariant_p (TREE_OPERAND (inner, 1)))
-	    inner = TREE_OPERAND (inner, 0);
-	  else if (tree_invariant_p (TREE_OPERAND (inner, 0)))
-	    inner = TREE_OPERAND (inner, 1);
+	  if (tree_invariant_p (TREE_OPERAND (expr, 1)))
+	    expr = TREE_OPERAND (expr, 0);
+	  else if (tree_invariant_p (TREE_OPERAND (expr, 0)))
+	    expr = TREE_OPERAND (expr, 1);
 	  else
 	    break;
 	}
@@ -2762,9 +2764,37 @@ skip_simple_arithmetic (tree expr)
 	break;
     }
 
-  return inner;
+  return expr;
 }
 
+/* Look inside EXPR into simple arithmetic operations involving constants.
+   Return the outermost non-arithmetic or non-constant node.  */
+
+tree
+skip_simple_constant_arithmetic (tree expr)
+{
+  while (TREE_CODE (expr) == NON_LVALUE_EXPR)
+    expr = TREE_OPERAND (expr, 0);
+
+  while (true)
+    {
+      if (UNARY_CLASS_P (expr))
+	expr = TREE_OPERAND (expr, 0);
+      else if (BINARY_CLASS_P (expr))
+	{
+	  if (TREE_CONSTANT (TREE_OPERAND (expr, 1)))
+	    expr = TREE_OPERAND (expr, 0);
+	  else if (TREE_CONSTANT (TREE_OPERAND (expr, 0)))
+	    expr = TREE_OPERAND (expr, 1);
+	  else
+	    break;
+	}
+      else
+	break;
+    }
+
+  return expr;
+}
 
 /* Return which tree structure is used by T.  */
 
@@ -3471,6 +3501,7 @@ stabilize_reference (tree ref)
 			 stabilize_reference (TREE_OPERAND (ref, 0)),
 			 stabilize_reference_1 (TREE_OPERAND (ref, 1)),
 			 stabilize_reference_1 (TREE_OPERAND (ref, 2)));
+      REF_REVERSE_STORAGE_ORDER (result) = REF_REVERSE_STORAGE_ORDER (ref);
       break;
 
     case ARRAY_REF:
@@ -3506,6 +3537,8 @@ stabilize_reference (tree ref)
   TREE_READONLY (result) = TREE_READONLY (ref);
   TREE_SIDE_EFFECTS (result) = TREE_SIDE_EFFECTS (ref);
   TREE_THIS_VOLATILE (result) = TREE_THIS_VOLATILE (ref);
+  protected_set_expr_location (result, EXPR_LOCATION (ref));
+  duplicate_expr_locations (result, ref);
 
   return result;
 }
@@ -4135,6 +4168,113 @@ build_block (tree vars, tree subblocks, tree supercontext, tree chain)
   return block;
 }
 
+/* location hash table */
+
+typedef struct {
+  const_tree node;
+  unsigned char len;
+  location_t locus[1];
+} sloc_struct;
+
+static htab_t extra_slocs = NULL;
+
+static hashval_t
+node_hash (const void *p)
+{
+  const sloc_struct *m = (const sloc_struct *)p;
+  return htab_hash_pointer (m->node);
+}
+
+static int
+node_eq (const void *p, const void *q)
+{
+  const sloc_struct *a = (const sloc_struct *)p;
+  const sloc_struct *b = (const sloc_struct *)q;
+
+  return a->node == b->node;
+}
+
+/* Only relevant for EXPR_P nodes and when flag_extra_slocs is enabled.
+   Return secondary locations if any for a given expression. This is useful for
+   getting more precise sloc information in particular correct column
+   numbers. Most expressions will return one extra loc, except for
+   COND_EXPR (2 extra) and CALL_EXPR (one extra loc per argument) */
+location_t *
+expr_locations (const_tree node)
+{
+  sloc_struct key;
+  sloc_struct *res;
+
+  if (!extra_slocs)
+    return NULL;
+
+  key.node = node;
+  res = (sloc_struct *) htab_find (extra_slocs, &key);
+  return res ? res->locus : NULL;
+}
+
+/* Return the nth location N associated with NODE, or UNKNOWN_LOCATION if
+   no extra location can be found.  */
+location_t
+expr_location_n (const_tree node, int n)
+{
+  sloc_struct key;
+  sloc_struct *res;
+
+  if (!extra_slocs)
+    return UNKNOWN_LOCATION;
+
+  key.node = node;
+  res = (sloc_struct *) htab_find (extra_slocs, &key);
+
+  if (res && res->len > n)
+    return res->locus[n];
+  else
+    return UNKNOWN_LOCATION;
+}
+
+void
+set_expr_locations (tree node, location_t *locus, int len)
+{
+  sloc_struct *m;
+
+  if (!flag_extra_slocs)
+    return;
+
+  if (!extra_slocs)
+    extra_slocs = htab_create (8192, node_hash, node_eq, free);
+
+  m = (sloc_struct *)
+       xcalloc (1, sizeof (sloc_struct) + sizeof (location_t) * (len - 1));
+  m->node = node;
+  m->len = len;
+  memcpy (m->locus, locus, sizeof (location_t) * len);
+  *htab_find_slot (extra_slocs, m, INSERT) = m;
+}
+
+void
+set_expr_location2 (tree node, location_t locus)
+{
+  location_t l = locus;
+
+  set_expr_locations (node, &l, 1);
+}
+
+void
+duplicate_expr_locations (tree target, tree source)
+{
+  sloc_struct key;
+  sloc_struct *res;
+
+  if (!extra_slocs || !CAN_HAVE_LOCATION_P (target))
+    return;
+
+  key.node = source;
+  res = (sloc_struct *) htab_find (extra_slocs, &key);
+
+  if (res)
+    set_expr_locations (target, res->locus, res->len);
+}
 
 /* Like SET_EXPR_LOCATION, but make sure the tree can have a location.
 
@@ -9358,6 +9498,7 @@ build_common_tree_nodes (bool signed_char, bool short_double)
   integer_ptr_type_node = build_pointer_type (integer_type_node);
 
   /* Fixed size integer types.  */
+  uint16_type_node = build_nonstandard_integer_type (16, true);
   uint32_type_node = build_nonstandard_integer_type (32, true);
   uint64_type_node = build_nonstandard_integer_type (64, true);
 
@@ -9558,11 +9699,18 @@ build_common_builtin_nodes (void)
 			BUILT_IN_INIT_HEAP_TRAMPOLINE,
 			"__builtin_init_heap_trampoline",
 			ECF_NOTHROW | ECF_LEAF);
+  local_define_builtin ("__builtin_init_descriptor", ftype,
+			BUILT_IN_INIT_DESCRIPTOR,
+			"__builtin_init_descriptor", ECF_NOTHROW | ECF_LEAF);
 
   ftype = build_function_type_list (ptr_type_node, ptr_type_node, NULL_TREE);
   local_define_builtin ("__builtin_adjust_trampoline", ftype,
 			BUILT_IN_ADJUST_TRAMPOLINE,
 			"__builtin_adjust_trampoline",
+			ECF_CONST | ECF_NOTHROW);
+  local_define_builtin ("__builtin_adjust_descriptor", ftype,
+			BUILT_IN_ADJUST_DESCRIPTOR,
+			"__builtin_adjust_descriptor",
 			ECF_CONST | ECF_NOTHROW);
 
   ftype = build_function_type_list (void_type_node,

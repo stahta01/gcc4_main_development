@@ -72,6 +72,20 @@
     }						\
   while (0)
 
+/* Define cutoff for using external functions to save floating point and
+   general purpose registers.  Lynx5 doesn't provide them so we expect to have
+   our own in libgcc.a and restrict the use to -Os when profitable.  */
+
+#undef FP_SAVE_INLINE
+#define FP_SAVE_INLINE(FIRST_REG) (optimize_size			\
+				   ? ((FIRST_REG) == 62			\
+				      || (FIRST_REG) == 63)		\
+				   : (FIRST_REG) < 64)
+
+#undef GP_SAVE_INLINE
+#define GP_SAVE_INLINE(FIRST_REG) ((FIRST_REG) < 32	\
+				   && !optimize_size)
+
 /* Override the rs6000.h definition.  */
 
 #undef ASM_APP_ON
@@ -118,3 +132,6 @@ static void __do_global_dtors_aux (void) __attribute__ ((longcall));
 
 static void __do_global_ctors_aux (void) __attribute__ ((longcall));
 #endif	/* CRT_END */
+
+/* Static stack checking is supported by means of probes.  */
+#define STACK_CHECK_STATIC_BUILTIN 1

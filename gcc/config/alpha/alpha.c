@@ -618,39 +618,6 @@ decl_has_samegp (const_tree decl)
   return !TREE_PUBLIC (decl) || !DECL_EXTERNAL (decl);
 }
 
-/* Return true if EXP should be placed in the small data section.  */
-
-static bool
-alpha_in_small_data_p (const_tree exp)
-{
-  /* We want to merge strings, so we never consider them small data.  */
-  if (TREE_CODE (exp) == STRING_CST)
-    return false;
-
-  /* Functions are never in the small data area.  Duh.  */
-  if (TREE_CODE (exp) == FUNCTION_DECL)
-    return false;
-
-  if (TREE_CODE (exp) == VAR_DECL && DECL_SECTION_NAME (exp))
-    {
-      const char *section = TREE_STRING_POINTER (DECL_SECTION_NAME (exp));
-      if (strcmp (section, ".sdata") == 0
-	  || strcmp (section, ".sbss") == 0)
-	return true;
-    }
-  else
-    {
-      HOST_WIDE_INT size = int_size_in_bytes (TREE_TYPE (exp));
-
-      /* If this is an incomplete type with size 0, then we can't put it
-	 in sdata because it might be too big when completed.  */
-      if (size > 0 && size <= g_switch_value)
-	return true;
-    }
-
-  return false;
-}
-
 #if TARGET_ABI_OPEN_VMS
 static bool
 vms_valid_pointer_mode (enum machine_mode mode)
@@ -9459,7 +9426,7 @@ alpha_file_start (void)
     }
 }
 
-#ifdef OBJECT_FORMAT_ELF
+#if defined (OBJECT_FORMAT_ELF) && !TARGET_ABI_OPEN_VMS
 /* Since we don't have a .dynbss section, we should not allow global
    relocations in the .rodata section.  */
 
@@ -9498,6 +9465,39 @@ alpha_elf_section_type_flags (tree decl, const char *name, int reloc)
 
   flags |= default_section_type_flags (decl, name, reloc);
   return flags;
+}
+
+/* Return true if EXP should be placed in the small data section.  */
+
+static bool
+alpha_in_small_data_p (const_tree exp)
+{
+  /* We want to merge strings, so we never consider them small data.  */
+  if (TREE_CODE (exp) == STRING_CST)
+    return false;
+
+  /* Functions are never in the small data area.  Duh.  */
+  if (TREE_CODE (exp) == FUNCTION_DECL)
+    return false;
+
+  if (TREE_CODE (exp) == VAR_DECL && DECL_SECTION_NAME (exp))
+    {
+      const char *section = TREE_STRING_POINTER (DECL_SECTION_NAME (exp));
+      if (strcmp (section, ".sdata") == 0
+	  || strcmp (section, ".sbss") == 0)
+	return true;
+    }
+  else
+    {
+      HOST_WIDE_INT size = int_size_in_bytes (TREE_TYPE (exp));
+
+      /* If this is an incomplete type with size 0, then we can't put it
+	 in sdata because it might be too big when completed.  */
+      if (size > 0 && size <= g_switch_value)
+	return true;
+    }
+
+  return false;
 }
 #endif /* OBJECT_FORMAT_ELF */
 
@@ -9772,9 +9772,6 @@ alpha_conditional_register_usage (void)
 # define TARGET_CAN_ELIMINATE alpha_vms_can_eliminate
 #endif
 
-#undef TARGET_IN_SMALL_DATA_P
-#define TARGET_IN_SMALL_DATA_P alpha_in_small_data_p
-
 #undef TARGET_ASM_ALIGNED_HI_OP
 #define TARGET_ASM_ALIGNED_HI_OP "\t.word\t"
 #undef TARGET_ASM_ALIGNED_DI_OP
@@ -9791,13 +9788,15 @@ alpha_conditional_register_usage (void)
 #define TARGET_ASM_UNALIGNED_DI_OP "\t.align 0\n\t.quad\t"
 #endif
 
-#ifdef OBJECT_FORMAT_ELF
+#if defined (OBJECT_FORMAT_ELF) && !TARGET_ABI_OPEN_VMS
 #undef  TARGET_ASM_RELOC_RW_MASK
 #define TARGET_ASM_RELOC_RW_MASK  alpha_elf_reloc_rw_mask
 #undef	TARGET_ASM_SELECT_RTX_SECTION
 #define	TARGET_ASM_SELECT_RTX_SECTION  alpha_elf_select_rtx_section
 #undef  TARGET_SECTION_TYPE_FLAGS
 #define TARGET_SECTION_TYPE_FLAGS  alpha_elf_section_type_flags
+#undef  TARGET_IN_SMALL_DATA_P
+#define TARGET_IN_SMALL_DATA_P alpha_in_small_data_p
 #endif
 
 #undef TARGET_ASM_FUNCTION_END_PROLOGUE

@@ -297,3 +297,6 @@ do {                                                \
 
 #undef TARGET_VALID_POINTER_MODE
 #define TARGET_VALID_POINTER_MODE vms_valid_pointer_mode
+
+/* VMS already uses descriptors for its standard calling sequence.  */
+#define USE_RUNTIME_DESCRIPTORS 0

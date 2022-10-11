@@ -1,5 +1,5 @@
 /* VMS linker wrapper.
-   Copyright (C) 2011 Free Software Foundation, Inc.
+   Copyright (C) 2011, 2013 Free Software Foundation, Inc.
    Contributed by AdaCore
 
 This file is part of GCC.
@@ -51,9 +51,13 @@ static int verbose = 0;
 /* save_temps = 1 if -save-temps passed.  */
 static int save_temps = 0;
 
-/* By default don't generate executable file if there are errors
-   in the link.  Override with --noinhibit-exec.  */
-static int inhibit_exec = 1;
+/* By default generate the executable file even if there are  warnings
+   in the link.  This matches the default behavior of VMS LINK.
+   Override with --inhibit-exec.  Some warnings are bogus, such as
+   a long file name for the exectuable even if long file names are
+   otherwise allowed.   "Real" warnings will set a flag in the .exe
+   file, and cause the image activator to issue a warning as well.  */
+static int inhibit_exec = 0;
 
 /* debug = 1 if -g passed.  */
 static int debug = 0;
@@ -206,11 +210,11 @@ locate_lib (char *lib_name)
 
       /* Look for files with the extensions.  */
       for (j = 0; j < 3; j++)
-        {
+	{
 	  strcpy (buf + l, exts[j]);
 	  if (is_regular_file (buf))
 	    return xstrdup (to_host_file_spec (buf));
-        }
+	}
     }
 
   return NULL;
@@ -257,8 +261,8 @@ preprocess_args (int argc, char **argv)
   for (i = 1; i < argc; i++)
     if (strcmp (argv[i], "-shared") == 0)
       {
-        share = 1;
-        break;
+	share = 1;
+	break;
       }
 
   for (i = 1; i < argc; i++)
@@ -267,35 +271,35 @@ preprocess_args (int argc, char **argv)
 	int len;
 
 	i++;
-        exefilename = lbasename (argv[i]);
+	exefilename = lbasename (argv[i]);
 	exefullfilename = xstrdup (to_host_file_spec (argv[i]));
 
 	if (share)
-          addarg(" /share=");
+	  addarg(" /share=");
 	else
 	  addarg (" /exe=");
-        addarg (exefullfilename);
+	addarg (exefullfilename);
 
 	if (share)
 	  {
-            char *ptr;
+	    char *ptr;
 
-            /* Extract the basename.  */
+	    /* Extract the basename.  */
 	    ptr = strchr (argv[i], ']');
-            if (ptr == NULL)
-              ptr = strchr (argv[i], ':');
-            if (ptr == NULL)
-              ptr = strchr (argv[i], '/');
-            if (ptr == NULL)
+	    if (ptr == NULL)
+	      ptr = strchr (argv[i], ':');
+	    if (ptr == NULL)
+	      ptr = strchr (argv[i], '/');
+	    if (ptr == NULL)
 	      sharebasename = xstrdup (argv[i]);
-            else
+	    else
 	      sharebasename = xstrdup (ptr + 1);
 
 	    len = strlen (sharebasename);
 	    if (strncasecmp (&sharebasename[len-4], ".exe", 4) == 0)
 	      sharebasename[len - 4] = 0;
 
-            /* Convert to uppercase.  */
+	    /* Convert to uppercase.  */
 	    for (ptr = sharebasename; *ptr; ptr++)
 	      *ptr = TOUPPER (*ptr);
 	  }
@@ -321,9 +325,9 @@ process_args (int argc, char **argv)
     {
       if (strncmp (argv[i], "-L", 2) == 0)
 	{
-          search_dirs = XRESIZEVEC(const char *, search_dirs,
-                                   search_dirs_len + 1);
-          search_dirs[search_dirs_len++] = &argv[i][2];
+	  search_dirs = XRESIZEVEC(const char *, search_dirs,
+				   search_dirs_len + 1);
+	  search_dirs[search_dirs_len++] = &argv[i][2];
 	}
 
       /* -v turns on verbose option here and is passed on to gcc.  */
@@ -332,12 +336,12 @@ process_args (int argc, char **argv)
       else if (strcmp (argv[i], "--version") == 0)
 	{
 	  fprintf (stdout, "VMS Linker\n");
-          exit (EXIT_SUCCESS);
+	  exit (EXIT_SUCCESS);
 	}
       else if (strcmp (argv[i], "--help") == 0)
 	{
 	  fprintf (stdout, "VMS Linker\n");
-          exit (EXIT_SUCCESS);
+	  exit (EXIT_SUCCESS);
 	}
       else if (strcmp (argv[i], "-g0") == 0)
 	addarg ("/notraceback");
@@ -360,15 +364,16 @@ process_args (int argc, char **argv)
 	  strcat (buff, ".map");
 	  addarg ("/map=");
 	  addarg (buff);
-          addarg (".map");
 	  addarg ("/full");
 
-          free (buff);
+	  free (buff);
 	}
       else if (strcmp (argv[i], "-save-temps") == 0)
 	save_temps = 1;
       else if (strcmp (argv[i], "--noinhibit-exec") == 0)
 	inhibit_exec = 0;
+      else if (strcmp (argv[i], "--inhibit-exec") == 0)
+	inhibit_exec = 1;
     }
 }
 
@@ -536,7 +541,7 @@ set_exe (const char *arg)
   int res;
 
   snprintf (allargs, sizeof (allargs),
-            "$@gnu:[bin]set_exe %s %s", exefullfilename, arg);
+	    "$@gnu:[bin]set_exe %s %s", exefullfilename, arg);
   if (verbose)
     printf ("%s\n", allargs);
 
@@ -549,6 +554,33 @@ set_exe (const char *arg)
       fprintf (stderr, "ld error: popen set_exe\n");
       return 1;
     }
+  return 0;
+}
+
+/* Read a .opt file, and merge it with the main options file.  */
+
+static int
+read_options_file (char *optfilename, FILE *optfile)
+{
+  /* Read option file.  */
+  FILE *optfile1;
+  char buff[256];
+
+  /* Disable __UNIX_FOPEN redefinition in case user supplied .opt
+     file is not stream oriented. */
+
+  optfile1 = (fopen) (optfilename, "r");
+  if (optfile1 == 0)
+    {
+      perror (optfilename);
+      return 1;
+    }
+
+  while (fgets (buff, sizeof (buff), optfile1))
+    fputs (buff, optfile);
+
+  fclose (optfile1);
+
   return 0;
 }
 
@@ -633,15 +665,15 @@ main (int argc, char **argv)
 	{
 	  /* Comes from command line. If present will always appear before
 	     --identification=... and will override.  */
-          break;
+	  break;
 	}
       else if (arg_len > 17
 	       && strncasecmp (argv[i], "--identification=", 17) == 0)
 	{
 	  /* Comes from pragma Ident ().  */
-          fprintf (optfile, "case_sensitive=yes\n");
-          fprintf (optfile, "IDENTIFICATION=\"%-.15s\"\n", &argv[i][17]);
-          fprintf (optfile, "case_sensitive=NO\n");
+	  fprintf (optfile, "case_sensitive=yes\n");
+	  fprintf (optfile, "IDENTIFICATION=\"%-.15s\"\n", &argv[i][17]);
+	  fprintf (optfile, "case_sensitive=NO\n");
 	}
     }
 
@@ -650,29 +682,57 @@ main (int argc, char **argv)
       int arg_len = strlen (argv[i]);
 
       if (strcmp (argv[i], "-o") == 0)
-        {
-          /* Already handled.  */
-          i++;
-        }
+	{
+	  /* Already handled.  */
+	  i++;
+	}
       else if (arg_len > 2 && strncmp (argv[i], "-l", 2) == 0)
 	{
 	  const char *libname;
+	  char *ext_loc;
+	  char is_shareable = 0 ;
 
-          libname = expand_lib (&argv[i][2]);
+	  libname = expand_lib (&argv[i][2]);
 	  if (libname != NULL)
 	    {
-              int len = strlen (libname);
-              const char *ext;
+	      int len = strlen (libname);
+	      const char *ext;
 
 	      if (len > 4 && strcasecmp (&libname [len-4], ".exe") == 0)
-		ext = "/shareable";
+		{
+		  ext = "/shareable";
+		  is_shareable = 1;
+		}
 	      else
-		ext = "/library";
+		{
+		  ext = "/library";
+		}
 
 	      if (libname[0] == '[')
-                fprintf (optfile, "%s%s%s\n", cwdev, libname, ext);
+		fprintf (optfile, "%s%s%s\n", cwdev, libname, ext);
 	      else
-                fprintf (optfile, "%s%s\n", libname, ext);
+		fprintf (optfile, "%s%s\n", libname, ext);
+
+	      /* Check if there's a corresponding options file of the same
+		 name in the same directory for a shareable image library.  */
+	      if (is_shareable)
+		{
+		   char *buf = (char *) xmalloc (strlen (libname) + 1);
+
+		   ext_loc = strrchr (libname, '.');
+		  *ext_loc = '\0';
+
+		  strcpy (buf, libname);
+		  strcat (buf, ".opt");
+
+		  if (is_regular_file (buf))
+		    status = read_options_file (buf, optfile);
+
+		  free (buf);
+
+		  if (status != 0)
+		    goto cleanup_and_exit;
+		}
 	    }
 	}
       else if (strcmp (argv[i], "-v" ) == 0
@@ -681,16 +741,17 @@ main (int argc, char **argv)
 	       || strcmp (argv[i], "-map" ) == 0
 	       || strcmp (argv[i], "-save-temps") == 0
 	       || strcmp (argv[i], "--noinhibit-exec") == 0
+	       || strcmp (argv[i], "--inhibit-exec") == 0
 	       || (arg_len > 2 && strncmp (argv[i], "-L", 2) == 0)
 	       || (arg_len >= 6 && strncmp (argv[i], "-share", 6) == 0))
-        {
-          /* Already handled.  */
-        }
+	{
+	  /* Already handled.  */
+	}
       else if (strncmp (argv[i], "--opt=", 6) == 0)
 	fprintf (optfile, "%s\n", argv[i] + 6);
       else if (arg_len > 1 && argv[i][0] == '@')
 	{
-          /* Read response file (in fact a single line of filenames).  */
+	  /* Read response file (in fact a single line of filenames).  */
 	  FILE *atfile;
 	  char *ptr, *ptr1;
 	  struct stat statbuf;
@@ -704,13 +765,13 @@ main (int argc, char **argv)
 	      exit (EXIT_FAILURE);
 	    }
 
-          /* Read the line.  */
+	  /* Read the line.  */
 	  buff = (char *) xmalloc (statbuf.st_size + 1);
 	  atfile = fopen (&argv[i][1], "r");
 	  fgets (buff, statbuf.st_size + 1, atfile);
 	  fclose (atfile);
 
-          /* Remove trailing \n.  */
+	  /* Remove trailing \n.  */
 	  len = strlen (buff);
 	  if (buff [len - 1] == '\n')
 	    {
@@ -718,7 +779,7 @@ main (int argc, char **argv)
 	      len--;
 	    }
 
-          /* Put the filenames to the opt file.  */
+	  /* Put the filenames to the opt file.  */
 	  ptr = buff;
 	  do
 	  {
@@ -726,7 +787,7 @@ main (int argc, char **argv)
 	     if (ptr1)
 	       *ptr1 = 0;
 
-             /* Add device name if a path is present.  */
+	     /* Add device name if a path is present.  */
 	     ptr = to_host_file_spec (ptr);
 	     if (ptr[0] == '[')
 	       fprintf (optfile, "%s%s\n", cwdev, ptr);
@@ -735,37 +796,21 @@ main (int argc, char **argv)
 
 	     ptr = ptr1 + 1;
 	  }
-          while (ptr1);
+	  while (ptr1);
 	}
       else if ((argv[i][0] == '/') && (strchr (&argv[i][1], '/') == 0))
-        {
-          /* Unix style file specs and VMS style switches look alike,
-             so assume an arg consisting of one and only one slash,
-             and that being first, is really a switch.  */
-          addarg (argv[i]);
-        }
+	{
+	  /* Unix style file specs and VMS style switches look alike,
+	     so assume an arg consisting of one and only one slash,
+	     and that being first, is really a switch.  */
+	  addarg (argv[i]);
+	}
       else if (arg_len > 4
 	       && strncasecmp (&argv[i][arg_len-4], ".opt", 4) == 0)
 	{
-          /* Read option file.  */
-	  FILE *optfile1;
-	  char buff[256];
-
-	  /* Disable __UNIX_FOPEN redefinition in case user supplied .opt
-	     file is not stream oriented. */
-
-	  optfile1 = (fopen) (argv[i], "r");
-	  if (optfile1 == 0)
-	    {
-	      perror (argv[i]);
-	      status = 1;
-	      goto cleanup_and_exit;
-	    }
-
-	  while (fgets (buff, sizeof (buff), optfile1))
-	    fputs (buff, optfile);
-
-	  fclose (optfile1);
+	  status = read_options_file (argv [i], optfile);
+	  if (status != 0)
+	    goto cleanup_and_exit;
 	}
       else if (arg_len > 7 && strncasecmp (argv[i], "GSMATCH", 7) == 0)
 	fprintf (optfile, "%s\n", argv[i]);
@@ -778,13 +823,13 @@ main (int argc, char **argv)
 	}
       else if (arg_len > 17
 	       && strncasecmp (argv[i], "--identification=", 17) == 0)
-        {
-          /* Already handled.  */
-        }
+	{
+	  /* Already handled.  */
+	}
       else
 	{
 	  /* Assume filename arg.  */
-          const char *file;
+	  const char *file;
 	  const char *addswitch = NULL;
 	  char *buff;
 	  int buff_len;
@@ -829,28 +874,28 @@ main (int argc, char **argv)
 	  if (buff_len >= 15
 	      && strcasecmp (&buff[buff_len - 14], "vms-dwarf2eh.o") == 0)
 	    {
-              /* Remind of it.  */
-              vmsdwarf2ehspec = xstrdup (buff);
+	      /* Remind of it.  */
+	      vmsdwarf2ehspec = xstrdup (buff);
 	    }
 	  else if (buff_len >= 13
-                   && strcasecmp (&buff[buff_len - 12], "vms-dwarf2.o") == 0)
-            {
-              /* Remind of it.  */
-              vmsdwarf2spec = xstrdup (buff);
-            }
+		   && strcasecmp (&buff[buff_len - 12], "vms-dwarf2.o") == 0)
+	    {
+	      /* Remind of it.  */
+	      vmsdwarf2spec = xstrdup (buff);
+	    }
 	  else if (is_cld)
 	    {
-              /* Command line definition file.  */
-              addarg (buff);
-              addarg (addswitch);
+	      /* Command line definition file.  */
+	      addarg (buff);
+	      addarg (addswitch);
 	      addarg (",");
 	    }
 	  else
 	    {
-              fprintf (optfile, "%s%s\n",
-                       buff, addswitch != NULL ? addswitch : "");
+	      fprintf (optfile, "%s%s\n",
+		       buff, addswitch != NULL ? addswitch : "");
 	    }
-          free (buff);
+	  free (buff);
 	}
     }
 
@@ -927,29 +972,42 @@ main (int argc, char **argv)
 
   if ((status & 1) != 1)
     {
-      status = 1;
-      goto cleanup_and_exit;
+      if (inhibit_exec == 0)
+	{
+	  /* Actual returned status codes for AVMS and IVMS Link differ so
+	     pick a value that AFAIK is not used by VMS.  */
+	  status = 2;
+
+	  if (verbose)
+	    fprintf (stderr,
+		     "Warning: Link succeeded with warnings and/or errors\n");
+	}
+      else
+       {
+	 status = 1;
+	 goto cleanup_and_exit;
+       }
     }
 
   if (debug && !share && ld_nocall_debug)
     {
       status = set_exe ("/flags=nocall_debug");
       if (status != 0)
-        goto cleanup_and_exit;
+	goto cleanup_and_exit;
     }
 
   if (!share && ld_mkthreads)
     {
       status = set_exe ("/flags=mkthreads");
       if (status != 0)
-        goto cleanup_and_exit;
+	goto cleanup_and_exit;
     }
 
   if (!share && ld_upcalls)
     {
       status = set_exe ("/flags=upcalls");
       if (status != 0)
-        goto cleanup_and_exit;
+	goto cleanup_and_exit;
     }
 
   status = 0;
@@ -958,7 +1016,7 @@ main (int argc, char **argv)
   if (!save_temps)
     remove (optfilename);
 
-  if (status == 0)
+  if (status == 0 || status == 2)
     exit (EXIT_SUCCESS);
 
   if (exefullfilename && inhibit_exec == 1)

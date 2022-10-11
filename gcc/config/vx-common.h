@@ -92,3 +92,12 @@ along with GCC; see the file COPYING3.  If not see
 /* We occasionally need to distinguish between the VxWorks variants.  */
 #define VXWORKS_KIND_NORMAL  1
 #define VXWORKS_KIND_AE      2
+
+/* The default executable suffix is .out for VxWorks kernel modules and should
+   be .vxe for RTPs.  FIXME: the latter is conveyed by TARGET_VXWORKS_RTP,
+   which depends on flags set by -mrtp, ... which the gcc driver doesn't get
+   to see.  */
+#undef TARGET_EXECUTABLE_SUFFIX
+#define TARGET_EXECUTABLE_SUFFIX ".out"
+
+

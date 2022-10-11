@@ -442,7 +442,11 @@ DEFTREECODE (OBJ_TYPE_REF, "obj_type_ref", tcc_expression, 3)
    value in a SAVE_EXPR if you want to evaluate side effects only once.)
 
    For RECORD_TYPE, UNION_TYPE, or QUAL_UNION_TYPE:
-   The field INDEX of each node is a FIELD_DECL.  */
+   The field INDEX of each node is a FIELD_DECL.
+
+   Components that aren't present are cleared (to follow the C semantic),
+   unless the CONSTRUCTOR_NOCLEAR flag is set. In the later case, they become
+   undefined.  */
 DEFTREECODE (CONSTRUCTOR, "constructor", tcc_exceptional, 0)
 
 /* The expression types are mostly straightforward, with the fourth argument

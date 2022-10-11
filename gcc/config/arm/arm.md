@@ -117,6 +117,8 @@
 			; that.
   UNSPEC_UNALIGNED_STORE ; Same for str/strh.
   UNSPEC_PIC_UNIFIED    ; Create a common pic addressing form.
+  UNSPEC_PROBE_STACK    ; Probe stack memory reference
+  UNSPEC_PROBE_STACK_RANGE ; Probe stack range
 ])
 
 ;; UNSPEC_VOLATILE Usage:
@@ -335,13 +337,14 @@
 ; store2	store 2 words
 ; store3	store 3 words
 ; store4	store 4 (or more) words
+; trap		cause a trap in the kernel
 ;  Additions for Cirrus Maverick co-processor:
 ; mav_farith	Floating point arithmetic (4 cycle)
 ; mav_dmult	Double multiplies (7 cycle)
 ;
 
 (define_attr "type"
-	"alu,alu_shift,alu_shift_reg,mult,block,float,fdivx,fdivd,fdivs,fmul,fmuls,fmuld,fmacs,fmacd,ffmul,farith,ffarith,f_flag,float_em,f_fpa_load,f_fpa_store,f_loads,f_loadd,f_stores,f_stored,f_mem_r,r_mem_f,f_2_r,r_2_f,f_cvt,branch,call,load_byte,load1,load2,load3,load4,store1,store2,store3,store4,mav_farith,mav_dmult,fconsts,fconstd,fadds,faddd,ffariths,ffarithd,fcmps,fcmpd,fcpys"
+	"alu,alu_shift,alu_shift_reg,mult,block,float,fdivx,fdivd,fdivs,fmul,fmuls,fmuld,fmacs,fmacd,ffmul,farith,ffarith,f_flag,float_em,f_fpa_load,f_fpa_store,f_loads,f_loadd,f_stores,f_stored,f_mem_r,r_mem_f,f_2_r,r_2_f,f_cvt,branch,call,load_byte,load1,load2,load3,load4,store1,store2,store3,store4,trap,mav_farith,mav_dmult,fconsts,fconstd,fadds,faddd,ffariths,ffarithd,fcmps,fcmpd,fcpys"
 	(if_then_else 
 	 (eq_attr "insn" "smulxy,smlaxy,smlalxy,smulwy,smlawx,mul,muls,mla,mlas,umull,umulls,umlal,umlals,smull,smulls,smlal,smlals")
 	 (const_string "mult")
@@ -4547,7 +4550,8 @@
 			 [(if_then_else (eq_attr "is_arch6" "yes")
 				       (const_int 2) (const_int 4))
 			 (const_int 4)])
-   (set_attr "type" "alu_shift,load_byte")]
+   (set_attr "type" "alu_shift,load_byte")
+   (set_attr "pool_range" "*,60")]
 )
 
 (define_insn "*arm_zero_extendhisi2"
@@ -4558,7 +4562,9 @@
    #
    ldr%(h%)\\t%0, %1"
   [(set_attr "type" "alu_shift,load_byte")
-   (set_attr "predicable" "yes")]
+   (set_attr "predicable" "yes")
+   (set_attr "pool_range" "*,256")
+   (set_attr "neg_pool_range" "*,244")]
 )
 
 (define_insn "*arm_zero_extendhisi2_v6"
@@ -4569,7 +4575,9 @@
    uxth%?\\t%0, %1
    ldr%(h%)\\t%0, %1"
   [(set_attr "type" "alu_shift,load_byte")
-   (set_attr "predicable" "yes")]
+   (set_attr "predicable" "yes")
+   (set_attr "pool_range" "*,256")
+   (set_attr "neg_pool_range" "*,244")]
 )
 
 (define_insn "*arm_zero_extendhisi2addsi"
@@ -4639,7 +4647,8 @@
    uxtb\\t%0, %1
    ldrb\\t%0, %1"
   [(set_attr "length" "2")
-   (set_attr "type" "alu_shift,load_byte")]
+   (set_attr "type" "alu_shift,load_byte")
+   (set_attr "pool_range" "*,32")]
 )
 
 (define_insn "*arm_zero_extendqisi2"
@@ -4651,7 +4660,9 @@
    ldr%(b%)\\t%0, %1\\t%@ zero_extendqisi2"
   [(set_attr "length" "8,4")
    (set_attr "type" "alu_shift,load_byte")
-   (set_attr "predicable" "yes")]
+   (set_attr "predicable" "yes")
+   (set_attr "pool_range" "*,4096")
+   (set_attr "neg_pool_range" "*,4084")]
 )
 
 (define_insn "*arm_zero_extendqisi2_v6"
@@ -4662,7 +4673,9 @@
    uxtb%(%)\\t%0, %1
    ldr%(b%)\\t%0, %1\\t%@ zero_extendqisi2"
   [(set_attr "type" "alu_shift,load_byte")
-   (set_attr "predicable" "yes")]
+   (set_attr "predicable" "yes")
+   (set_attr "pool_range" "*,4096")
+   (set_attr "neg_pool_range" "*,4084")]
 )
 
 (define_insn "*arm_zero_extendqisi2addsi"
@@ -8749,6 +8762,27 @@
    (set_attr "type" "block")]
 )
 
+(define_insn "probe_stack"
+  [(set (match_operand 0 "memory_operand" "=m")
+        (unspec [(const_int 0)] UNSPEC_PROBE_STACK))]
+  "TARGET_32BIT"
+{
+  return "str%?\\tr0, %0";
+}
+  [(set_attr "type" "store1")
+   (set_attr "predicable" "yes")]
+)
+
+(define_insn "probe_stack_range"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+	(unspec_volatile:SI [(match_operand:SI 1 "register_operand" "0")
+			     (match_operand:SI 2 "register_operand" "r")]
+			     UNSPEC_PROBE_STACK_RANGE))]
+  "TARGET_32BIT"
+{
+  return output_probe_stack_range (operands[0], operands[2]);
+})
+
 (define_expand "casesi"
   [(match_operand:SI 0 "s_register_operand" "")	; index to jump on
    (match_operand:SI 1 "const_int_operand" "")	; lower bound
@@ -8904,6 +8938,37 @@
 	(if_then_else (eq_attr "is_thumb" "yes")
 		      (const_int 2)
 		      (const_int 4)))]
+)
+
+(define_insn "trap"
+  [(trap_if (const_int 1) (const_int 0))]
+  ""
+  "*
+  if (TARGET_ARM)
+    return \".inst\\t0xe7f000f0\";
+  else
+    return \".inst\\t0xdeff\";
+  "
+  [(set (attr "length")
+	(if_then_else (eq_attr "is_thumb" "yes")
+		      (const_int 2)
+		      (const_int 4)))
+   (set_attr "type" "trap")
+   (set_attr "conds" "unconditional")]
+)
+
+(define_insn "*cond_trap"
+  [(trap_if (match_operator 0 "arm_comparison_operator"
+	      [(reg:CC CC_REGNUM) (const_int 0)])
+	    (const_int 0))]
+  ""
+  "* return output_cond_trap (operands[0]);"
+  [(set (attr "length")
+	(if_then_else (eq_attr "is_thumb" "yes")
+		      (const_int 4)
+		      (const_int 8)))
+   (set_attr "type" "trap")
+   (set_attr "conds" "use")]
 )
 
 

@@ -401,6 +401,7 @@ convert_to_real (tree type, tree expr)
 tree
 convert_to_integer (tree type, tree expr)
 {
+  location_t loc = EXPR_LOCATION (expr);
   enum tree_code ex_form = TREE_CODE (expr);
   tree intype = TREE_TYPE (expr);
   unsigned int inprec = TYPE_PRECISION (intype);
@@ -556,10 +557,10 @@ convert_to_integer (tree type, tree expr)
 	 there widen/truncate to the required type.  Some targets support the
 	 coexistence of multiple valid pointer sizes, so fetch the one we need
 	 from the type.  */
-      expr = fold_build1 (CONVERT_EXPR,
-			  lang_hooks.types.type_for_size
-			    (TYPE_PRECISION (intype), 0),
-			  expr);
+      expr = fold_build1_loc (loc, CONVERT_EXPR,
+			      lang_hooks.types.type_for_size
+			        (TYPE_PRECISION (intype), 0),
+			      expr);
       return fold_convert (type, expr);
 
     case INTEGER_TYPE:
@@ -601,11 +602,11 @@ convert_to_integer (tree type, tree expr)
 	  else
 	    code = NOP_EXPR;
 
-	  tem = fold_unary (code, type, expr);
+	  tem = fold_unary_loc (loc, code, type, expr);
 	  if (tem)
 	    return tem;
 
-	  tem = build1 (code, type, expr);
+	  tem = build1_loc (loc, code, type, expr);
 	  TREE_NO_WARNING (tem) = 1;
 	  return tem;
 	}
@@ -616,10 +617,11 @@ convert_to_integer (tree type, tree expr)
 	 to TYPE.  */
       else if (TREE_CODE (type) == ENUMERAL_TYPE
 	       || outprec != GET_MODE_PRECISION (TYPE_MODE (type)))
-	return build1 (NOP_EXPR, type,
-		       convert (lang_hooks.types.type_for_mode
-				(TYPE_MODE (type), TYPE_UNSIGNED (type)),
-				expr));
+	return build1_loc (loc, NOP_EXPR, type,
+		           convert (lang_hooks.types.type_for_mode
+				    (TYPE_MODE (type),
+                                     TYPE_UNSIGNED (type)),
+				    expr));
 
       /* Here detect when we can distribute the truncation down past some
 	 arithmetic.  For example, if adding two longs and converting to an
@@ -678,7 +680,7 @@ convert_to_integer (tree type, tree expr)
 		  /* If the original expression had side-effects, we must
 		     preserve it.  */
 		  if (TREE_SIDE_EFFECTS (expr))
-		    return build2 (COMPOUND_EXPR, type, expr, t);
+		    return build2_loc (loc, COMPOUND_EXPR, type, expr, t);
 		  else
 		    return t;
 		}
@@ -809,10 +811,11 @@ convert_to_integer (tree type, tree expr)
 		      typex = signed_type_for (typex);
 
 		    if (TYPE_PRECISION (otypex) == TYPE_PRECISION (typex))
-		      return convert (type,
-				      fold_build2 (ex_form, typex,
-						   convert (typex, arg0),
-						   convert (typex, arg1)));
+		      return
+                        convert (type,
+				 fold_build2_loc (loc, ex_form, typex,
+						  convert (typex, arg0),
+						  convert (typex, arg1)));
 		  }
 	      }
 	  }
@@ -824,10 +827,11 @@ convert_to_integer (tree type, tree expr)
 	     since we must test the sign before truncation.  */
 	  {
 	    tree typex = unsigned_type_for (type);
-	    return convert (type,
-			    fold_build1 (ex_form, typex,
-					 convert (typex,
-						  TREE_OPERAND (expr, 0))));
+	    return
+	      convert (type,
+		       fold_build1_loc (loc, ex_form, typex,
+					convert (typex,
+						 TREE_OPERAND (expr, 0))));
 	  }
 
 	case NOP_EXPR:
@@ -846,7 +850,7 @@ convert_to_integer (tree type, tree expr)
 	     the conditional and never loses.  A COND_EXPR may have a throw
 	     as one operand, which then has void type.  Just leave void
 	     operands as they are.  */
-	  return fold_build3 (COND_EXPR, type, TREE_OPERAND (expr, 0),
+	  return fold_build3_loc (loc, COND_EXPR, type, TREE_OPERAND (expr, 0),
 			      VOID_TYPE_P (TREE_TYPE (TREE_OPERAND (expr, 1)))
 			      ? TREE_OPERAND (expr, 1)
 			      : convert (type, TREE_OPERAND (expr, 1)),
@@ -862,13 +866,13 @@ convert_to_integer (tree type, tree expr)
 	 Shortcut this.  */
       if (TREE_CODE (expr) == INTEGER_CST)
 	return fold_convert (type, expr);
-      return build1 (CONVERT_EXPR, type, expr);
+      return build1_loc (loc, CONVERT_EXPR, type, expr);
 
     case REAL_TYPE:
-      return build1 (FIX_TRUNC_EXPR, type, expr);
+      return build1_loc (loc, FIX_TRUNC_EXPR, type, expr);
 
     case FIXED_POINT_TYPE:
-      return build1 (FIXED_CONVERT_EXPR, type, expr);
+      return build1_loc (loc, FIXED_CONVERT_EXPR, type, expr);
 
     case COMPLEX_TYPE:
       return convert (type,
@@ -881,7 +885,7 @@ convert_to_integer (tree type, tree expr)
 	  error ("can%'t convert between vector values of different size");
 	  return error_mark_node;
 	}
-      return build1 (VIEW_CONVERT_EXPR, type, expr);
+      return build1_loc (loc, VIEW_CONVERT_EXPR, type, expr);
 
     default:
       error ("aggregate value used where an integer was expected");

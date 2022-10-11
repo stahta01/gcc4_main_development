@@ -86,3 +86,9 @@ along with GCC; see the file COPYING3.  If not see
    TLS is detected by configure.  We undefine it here.  */
 
 #undef HAVE_AS_TLS
+
+/* Static stack checking is supported by means of probes.  */
+#define STACK_CHECK_STATIC_BUILTIN 1
+
+/* Support frame-pointer based unwinding.  */
+#define USE_IX86_FRAME_POINTER 1

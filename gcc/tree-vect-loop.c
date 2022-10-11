@@ -1451,12 +1451,12 @@ vect_analyze_loop_operations (loop_vec_info loop_vinfo, bool slp)
           || min_profitable_iters > min_scalar_loop_bound))
     th = (unsigned) min_profitable_iters;
 
-  if (LOOP_VINFO_NITERS_KNOWN_P (loop_vinfo)
+  if (!loop->hint_vector
+      && LOOP_VINFO_NITERS_KNOWN_P (loop_vinfo)
       && LOOP_VINFO_INT_NITERS (loop_vinfo) <= th)
     {
       if (vect_print_dump_info (REPORT_UNVECTORIZED_LOCATIONS))
-        fprintf (vect_dump, "not vectorized: vectorization not "
-                 "profitable.");
+        fprintf (vect_dump, "not vectorized: vectorization not profitable.");
       if (vect_print_dump_info (REPORT_DETAILS))
         fprintf (vect_dump, "not vectorized: iteration count smaller than "
                  "user specified loop bound parameter or minimum "
@@ -1658,6 +1658,13 @@ vect_analyze_loop (struct loop *loop)
     {
       if (vect_print_dump_info (REPORT_DETAILS))
 	fprintf (vect_dump, "outer-loop already vectorized.");
+      return NULL;
+    }
+
+  if (loop->hint_no_vector)
+    {
+      if (vect_print_dump_info (REPORT_DETAILS))
+	fprintf (vect_dump, "loop marked with no-vector optimization hint.");
       return NULL;
     }
 

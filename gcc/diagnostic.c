@@ -239,7 +239,7 @@ diagnostic_action_after_output (diagnostic_context *context,
 
       fnotice (stderr, "Please submit a full bug report,\n"
 	       "with preprocessed source if appropriate.\n"
-	       "See %s for instructions.\n", bug_report_url);
+	       "Contact %s for instructions.\n", bug_report_url);
       exit (ICE_EXIT_CODE);
 
     case DK_FATAL:
@@ -316,9 +316,10 @@ default_diagnostic_finalizer (diagnostic_context *context,
   pp_destroy_prefix (context->printer);
 }
 
-/* Interface to specify diagnostic kind overrides.  Returns the
+/* Interface to specify diagnostic kind overrides.  Return the
    previous setting, or DK_UNSPECIFIED if the parameters are out of
-   range.  */
+   range.  If OPTION_INDEX is zero, the new setting is for all the
+   diagnostics.  */
 diagnostic_t
 diagnostic_classify_diagnostic (diagnostic_context *context,
 				int option_index,
@@ -327,7 +328,7 @@ diagnostic_classify_diagnostic (diagnostic_context *context,
 {
   diagnostic_t old_kind;
 
-  if (option_index <= 0
+  if (option_index < 0
       || option_index >= context->n_opts
       || new_kind >= DK_LAST_DIAGNOSTIC_KIND)
     return DK_UNSPECIFIED;
@@ -472,7 +473,9 @@ diagnostic_report_diagnostic (diagnostic_context *context,
 		      i = context->classification_history[i].option;
 		      continue;
 		    }
-		  if (context->classification_history[i].option == diagnostic->option_index)
+		  if (context->classification_history[i].option == 0
+		      || context->classification_history[i].option
+			 == diagnostic->option_index)
 		    {
 		      diag_class = context->classification_history[i].kind;
 		      if (diag_class != DK_UNSPECIFIED)

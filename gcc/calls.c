@@ -167,18 +167,66 @@ static void restore_fixed_argument_area (rtx, rtx, int, int);
 
 rtx
 prepare_call_address (tree fndecl, rtx funexp, rtx static_chain_value,
-		      rtx *call_fusage, int reg_parm_seen, int sibcallp)
+		      rtx *call_fusage, int reg_parm_seen, int flags)
 {
   /* Make a valid memory address and copy constants through pseudo-regs,
      but not for a constant address if -fno-function-cse.  */
   if (GET_CODE (funexp) != SYMBOL_REF)
-    /* If we are using registers for parameters, force the
-       function address into a register now.  */
-    funexp = ((reg_parm_seen
-	       && targetm.small_register_classes_for_mode_p (FUNCTION_MODE))
-	      ? force_not_mem (memory_address (FUNCTION_MODE, funexp))
-	      : memory_address (FUNCTION_MODE, funexp));
-  else if (! sibcallp)
+    {
+      /* If it's an indirect call by descriptor, generate code to perform
+	 runtime identification of the pointer and load the descriptor.  */
+      if ((flags & ECF_BY_DESCRIPTOR) && !flag_trampolines)
+	{
+	  rtx chain, mask, insn, mem, call_lab = gen_label_rtx ();
+
+	  gcc_assert (fndecl && TYPE_P (fndecl));
+	  fndecl
+	    = build_decl (UNKNOWN_LOCATION, FUNCTION_DECL, NULL_TREE, fndecl);
+	  DECL_STATIC_CHAIN (fndecl) = 1;
+	  chain = targetm.calls.static_chain (fndecl, false);
+
+	  /* Avoid long live ranges around function calls.  */
+	  funexp = copy_to_mode_reg (Pmode, funexp);
+
+	  if (REG_P (chain))
+	    emit_insn (gen_rtx_CLOBBER (VOIDmode, chain));
+
+	  /* Emit the runtime identification pattern.  */
+	  mask = gen_rtx_AND (Pmode, funexp, const1_rtx);
+	  emit_cmp_and_jump_insns (mask, const0_rtx, EQ, NULL_RTX, Pmode, 1,
+				   call_lab);
+
+	  /* Statically predict the branch to very likely taken.  */
+	  insn = get_last_insn ();
+	  if (JUMP_P (insn))
+	    predict_insn_def (insn, PRED_BUILTIN_EXPECT, TAKEN);
+
+	  /* Load the descriptor.  */
+	  mem = gen_rtx_MEM (Pmode, plus_constant (funexp, -1));
+	  MEM_NOTRAP_P (mem) = 1;
+	  emit_move_insn (chain, mem);
+	  mem = gen_rtx_MEM (Pmode,
+			     plus_constant (funexp, UNITS_PER_WORD - 1));
+	  MEM_NOTRAP_P (mem) = 1;
+	  emit_move_insn (funexp, mem);
+
+	  emit_label (call_lab);
+
+	  if (REG_P (chain))
+	    use_reg (call_fusage, chain);
+
+	  /* Make sure we're not going to be overwritten below.  */
+	  gcc_assert (!static_chain_value);
+	}
+
+      /* If we are using registers for parameters, force the
+	 function address into a register now.  */
+      funexp = ((reg_parm_seen
+		 && targetm.small_register_classes_for_mode_p (FUNCTION_MODE))
+		 ? force_not_mem (memory_address (FUNCTION_MODE, funexp))
+		 : memory_address (FUNCTION_MODE, funexp));
+    }
+  else if (!(flags & ECF_SIBCALL))
     {
 #ifndef NO_FUNCTION_CSE
       if (optimize && ! flag_no_function_cse)
@@ -190,7 +238,7 @@ prepare_call_address (tree fndecl, rtx funexp, rtx static_chain_value,
     {
       rtx chain;
 
-      gcc_assert (fndecl);
+      gcc_assert (fndecl && DECL_P (fndecl));
       chain = targetm.calls.static_chain (fndecl, false);
       static_chain_value = convert_memory_address (Pmode, static_chain_value);
 
@@ -757,11 +805,13 @@ call_expr_flags (const_tree t)
     flags = flags_from_decl_or_type (decl);
   else
     {
-      t = TREE_TYPE (CALL_EXPR_FN (t));
-      if (t && TREE_CODE (t) == POINTER_TYPE)
-	flags = flags_from_decl_or_type (TREE_TYPE (t));
+      tree type = TREE_TYPE (CALL_EXPR_FN (t));
+      if (type && TREE_CODE (type) == POINTER_TYPE)
+	flags = flags_from_decl_or_type (TREE_TYPE (type));
       else
 	flags = 0;
+      if (CALL_EXPR_BY_DESCRIPTOR (t))
+	flags |= ECF_BY_DESCRIPTOR;
     }
 
   return flags;
@@ -1001,7 +1051,7 @@ store_unaligned_arguments_into_pseudos (struct arg_data *args, int num_actuals)
 
 	    args[i].aligned_regs[j] = reg;
 	    word = extract_bit_field (word, bitsize, 0, 1, false, NULL_RTX,
-				      word_mode, word_mode);
+				      word_mode, word_mode, false);
 
 	    /* There is no need to restrict this code to loading items
 	       in TYPE_ALIGN sized hunks.  The bitfield instructions can
@@ -1018,7 +1068,7 @@ store_unaligned_arguments_into_pseudos (struct arg_data *args, int num_actuals)
 
 	    bytes -= bitsize / BITS_PER_UNIT;
 	    store_bit_field (reg, bitsize, endian_correction, 0, 0,
-			     word_mode, word);
+			     word_mode, word, false);
 	  }
       }
 }
@@ -1227,7 +1277,7 @@ initialize_argument_information (int num_actuals ATTRIBUTE_UNUSED,
 	      else
 		copy = assign_temp (type, 0, 1, 0);
 
-	      store_expr (args[i].tree_value, copy, 0, false);
+	      store_expr (args[i].tree_value, copy, 0, false, false);
 
 	      /* Just change the const function to pure and then let
 		 the next test clear the pure based on
@@ -2305,6 +2355,8 @@ expand_call (tree exp, rtx target, int ignore)
     {
       fntype = TREE_TYPE (TREE_TYPE (addr));
       flags |= flags_from_decl_or_type (fntype);
+      if (CALL_EXPR_BY_DESCRIPTOR (exp))
+	flags |= ECF_BY_DESCRIPTOR;
     }
   rettype = TREE_TYPE (exp);
 
@@ -2634,6 +2686,10 @@ expand_call (tree exp, rtx target, int ignore)
     preferred_stack_boundary = crtl->preferred_stack_boundary;
 
   preferred_unit_stack_boundary = preferred_stack_boundary / BITS_PER_UNIT;
+
+  if (flag_callgraph_info)
+    cgraph_final_record_call (current_function_decl, fndecl,
+			      EXPR_LOCATION (exp));
 
   /* We want to make two insn chains; one for a sibling call, the other
      for a normal call.  We will select one of the two chains after
@@ -3090,8 +3146,9 @@ expand_call (tree exp, rtx target, int ignore)
 	}
 
       after_args = get_last_insn ();
-      funexp = prepare_call_address (fndecl, funexp, static_chain_value,
-				     &call_fusage, reg_parm_seen, pass == 0);
+      funexp = prepare_call_address (!fndecl ? fntype : fndecl, funexp,
+				     static_chain_value, &call_fusage,
+				     reg_parm_seen, flags);
 
       load_register_parameters (args, num_actuals, &call_fusage, flags,
 				pass == 0, &sibcall_failure);
@@ -3112,8 +3169,9 @@ expand_call (tree exp, rtx target, int ignore)
 						   VOIDmode, void_type_node,
 						   true);
 
-      /* All arguments and registers used for the call must be set up by
-	 now!  */
+      /* All arguments and registers used for the call must be set up now.  */
+      if (EXPR_HAS_LOCATION (exp))
+	set_curr_insn_source_location (EXPR_LOCATION (exp));
 
       /* Stack must be properly aligned now.  */
       gcc_assert (!pass
@@ -3138,7 +3196,9 @@ expand_call (tree exp, rtx target, int ignore)
 	 group load/store machinery below.  */
       if (!structure_value_addr
 	  && !pcc_struct_value
+	  && TYPE_MODE (rettype) != VOIDmode
 	  && TYPE_MODE (rettype) != BLKmode
+	  && REG_P (valreg)
 	  && targetm.calls.return_in_msb (rettype))
 	{
 	  if (shift_return_value (TYPE_MODE (rettype), false, valreg))
@@ -3620,7 +3680,7 @@ emit_library_call_value_1 (int retval, rtx orgfun, rtx value,
       flags |= ECF_NORETURN;
       break;
     case LCT_THROW:
-      flags = ECF_NORETURN;
+      flags &= ~ECF_NOTHROW;
       break;
     case LCT_RETURNS_TWICE:
       flags = ECF_RETURNS_TWICE;
@@ -4146,6 +4206,10 @@ emit_library_call_value_1 (int retval, rtx orgfun, rtx value,
 		& (PREFERRED_STACK_BOUNDARY / BITS_PER_UNIT - 1)));
 
   before_call = get_last_insn ();
+
+  if (flag_callgraph_info)
+    cgraph_final_record_call (current_function_decl,
+			      SYMBOL_REF_DECL (orgfun), input_location);
 
   /* We pass the old value of inhibit_defer_pop + 1 to emit_call_1, which
      will set inhibit_defer_pop to that value.  */

@@ -116,6 +116,7 @@
 #include "pointer-set.h"
 #include "recog.h"
 #include "tm_p.h"
+#include "debug.h"
 
 /* var-tracking.c assumes that tree code with the same value as VALUE rtx code
    has no chance to appear in REG_EXPR/MEM_EXPRs and isn't a decl.
@@ -4665,11 +4666,17 @@ track_expr_p (tree expr, bool need_rtl)
 	  if (handled_component_p (realdecl))
 	    {
 	      HOST_WIDE_INT bitsize, bitpos, maxsize;
+	      bool reverse;
 	      tree innerdecl
 		= get_ref_base_and_extent (realdecl, &bitpos, &bitsize,
-					   &maxsize);
+					   &maxsize, &reverse);
 	      if (!DECL_P (innerdecl)
 		  || DECL_IGNORED_P (innerdecl)
+		  /* Do not track declarations for parts of tracked parameters
+		     since we want to track them as a whole instead.  */
+		  || (TREE_CODE (innerdecl) == PARM_DECL
+		      && DECL_MODE (innerdecl) != BLKmode
+		      && TREE_CODE (TREE_TYPE (innerdecl)) != UNION_TYPE)
 		  || TREE_STATIC (innerdecl)
 		  || bitsize <= 0
 		  || bitpos + bitsize > 256
@@ -5300,6 +5307,7 @@ reverse_op (rtx val, const_rtx expr, rtx insn)
   cselib_val *v;
   struct elt_loc_list *l;
   enum rtx_code code;
+  int count;
 
   if (GET_CODE (expr) != SET)
     return;
@@ -5341,9 +5349,12 @@ reverse_op (rtx val, const_rtx expr, rtx insn)
   /* Adding a reverse op isn't useful if V already has an always valid
      location.  Ignore ENTRY_VALUE, while it is always constant, we should
      prefer non-ENTRY_VALUE locations whenever possible.  */
-  for (l = v->locs; l; l = l->next)
+  for (l = v->locs, count = 0; l; l = l->next, count++)
     if (CONSTANT_P (l->loc)
 	&& (GET_CODE (l->loc) != CONST || !references_value_p (l->loc, 0)))
+      return;
+    /* Avoid creating too large locs lists.  */
+    else if (count == PARAM_VALUE (PARAM_MAX_VARTRACK_REVERSE_OP_SIZE))
       return;
 
   switch (GET_CODE (src))
@@ -5450,7 +5461,24 @@ add_stores (rtx loc, const_rtx expr, void *cuip)
 	    {
 	      rtx xexpr = gen_rtx_SET (VOIDmode, loc, src);
 	      if (same_variable_part_p (src, REG_EXPR (loc), REG_OFFSET (loc)))
-		mo.type = MO_COPY;
+		{
+		  /* If this is an instruction copying (part of) a parameter
+		     passed by invisible reference to its register location,
+		     pretend it's a SET so that the initial memory location
+		     is discarded, as the parameter register can be reused
+		     for other purposes and we do not track locations based
+		     on generic registers.  */
+		  if (MEM_P (src)
+		      && REG_EXPR (loc)
+		      && TREE_CODE (REG_EXPR (loc)) == PARM_DECL
+		      && DECL_MODE (REG_EXPR (loc)) != BLKmode
+		      && MEM_P (DECL_INCOMING_RTL (REG_EXPR (loc)))
+		      && XEXP (DECL_INCOMING_RTL (REG_EXPR (loc)), 0)
+			 != arg_pointer_rtx)
+		    mo.type = MO_SET;
+		  else
+		    mo.type = MO_COPY;
+		}
 	      else
 		mo.type = MO_SET;
 	      mo.u.loc = xexpr;
@@ -5512,6 +5540,21 @@ add_stores (rtx loc, const_rtx expr, void *cuip)
     return;
 
   if (type != MO_VAL_SET)
+    goto log_and_return;
+
+  /* We cannot track values for multiple-part variables, so we track only
+     locations for tracked parameters passed either by invisible reference
+     or directly in multiple locations.  */
+  if (track_p
+      && REG_P (loc)
+      && REG_EXPR (loc)
+      && TREE_CODE (REG_EXPR (loc)) == PARM_DECL
+      && DECL_MODE (REG_EXPR (loc)) != BLKmode
+      && TREE_CODE (TREE_TYPE (REG_EXPR (loc))) != UNION_TYPE
+      && ((MEM_P (DECL_INCOMING_RTL (REG_EXPR (loc)))
+	   && XEXP (DECL_INCOMING_RTL (REG_EXPR (loc)), 0) != arg_pointer_rtx)
+          || (GET_CODE (DECL_INCOMING_RTL (REG_EXPR (loc))) == PARALLEL
+	      && XVECLEN (DECL_INCOMING_RTL (REG_EXPR (loc)), 0) > 1)))
     goto log_and_return;
 
   v = find_use_val (oloc, mode, cui);
@@ -8601,7 +8644,7 @@ emit_notes_in_bb (basic_block bb, dataflow_set *set)
 	      else
 		var_mem_set (set, loc, VAR_INIT_STATUS_UNINITIALIZED, NULL);
 
-	      emit_notes_for_changes (insn, EMIT_NOTE_AFTER_INSN, set->vars);
+	      emit_notes_for_changes (insn, EMIT_NOTE_BEFORE_INSN, set->vars);
 	    }
 	    break;
 
@@ -8907,6 +8950,32 @@ vt_get_decl_and_offset (rtx rtl, tree *declp, HOST_WIDE_INT *offsetp)
 	  return true;
 	}
     }
+  else if (GET_CODE (rtl) == PARALLEL)
+    {
+      tree decl = NULL_TREE;
+      HOST_WIDE_INT offset = MAX_VAR_PARTS;
+      int len = XVECLEN (rtl, 0), i;
+
+      for (i = 0; i < len; i++)
+	{
+	  rtx reg = XEXP (XVECEXP (rtl, 0, i), 0);
+	  if (!REG_P (reg) || !REG_ATTRS (reg))
+	    break;
+	  if (!decl)
+	    decl = REG_EXPR (reg);
+	  if (REG_EXPR (reg) != decl)
+	    break;
+	  if (REG_OFFSET (reg) < offset)
+	    offset = REG_OFFSET (reg);
+	}
+
+      if (i == len)
+	{
+	  *declp = decl;
+	  *offsetp = offset;
+	  return true;
+	}
+    }
   else if (MEM_P (rtl))
     {
       if (MEM_ATTRS (rtl))
@@ -8994,6 +9063,28 @@ vt_add_function_parameter (tree parm)
 				  OUTGOING_REGNO (REGNO (incoming)), 0);
 	  p->outgoing = incoming;
 	}
+      else if (GET_CODE (incoming) == PARALLEL)
+	{
+	  rtx outgoing
+	    = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (XVECLEN (incoming, 0)));
+	  int i;
+
+	  for (i = 0; i < XVECLEN (incoming, 0); i++)
+	    {
+	      rtx reg = XEXP (XVECEXP (incoming, 0, i), 0);
+	      parm_reg_t *p
+		= VEC_safe_push (parm_reg_t, gc, windowed_parm_regs, NULL);
+	      p->incoming = reg;
+	      reg = gen_rtx_REG_offset (reg, GET_MODE (reg),
+					OUTGOING_REGNO (REGNO (reg)), 0);
+	      p->outgoing = reg;
+	      XVECEXP (outgoing, 0, i)
+		= gen_rtx_EXPR_LIST (VOIDmode, reg,
+				     XEXP (XVECEXP (incoming, 0, i), 1));
+	    }
+
+	  incoming = outgoing;
+	}
       else if (MEM_P (incoming)
 	       && REG_P (XEXP (incoming, 0))
 	       && HARD_REGISTER_P (XEXP (incoming, 0)))
@@ -9014,12 +9105,11 @@ vt_add_function_parameter (tree parm)
 
   if (!vt_get_decl_and_offset (incoming, &decl, &offset))
     {
-      if (REG_P (incoming) || MEM_P (incoming))
+      if (MEM_P (incoming))
 	{
 	  /* This means argument is passed by invisible reference.  */
 	  offset = 0;
 	  decl = parm;
-	  incoming = gen_rtx_MEM (GET_MODE (decl_rtl), incoming);
 	}
       else
 	{
@@ -9109,6 +9199,20 @@ vt_add_function_parameter (tree parm)
 				     VAR_INIT_STATUS_INITIALIZED, NULL, INSERT);
 		}
 	    }
+	}
+    }
+  else if (GET_CODE (incoming) == PARALLEL && !dv_onepart_p (dv))
+    {
+      int i;
+
+      for (i = 0; i < XVECLEN (incoming, 0); i++)
+	{
+	  rtx reg = XEXP (XVECEXP (incoming, 0, i), 0);
+	  offset = REG_OFFSET (reg);
+	  gcc_assert (REGNO (reg) < FIRST_PSEUDO_REGISTER);
+	  attrs_list_insert (&out->regs[REGNO (reg)], dv, offset, reg);
+	  set_variable_part (out, reg, dv, offset,
+			     VAR_INIT_STATUS_INITIALIZED, NULL, INSERT);
 	}
     }
   else if (MEM_P (incoming))
@@ -9483,14 +9587,16 @@ static void
 delete_debug_insns (void)
 {
   basic_block bb;
-  rtx insn, next;
+  rtx insn, next, last;
 
   if (!MAY_HAVE_DEBUG_INSNS)
     return;
 
   FOR_EACH_BB (bb)
     {
-      FOR_BB_INSNS_SAFE (bb, insn, next)
+      last = NULL_RTX;
+
+      FOR_BB_INSNS_REVERSE_SAFE (bb, insn, next)
 	if (DEBUG_INSN_P (insn))
 	  {
 	    tree decl = INSN_VAR_LOCATION_DECL (insn);
@@ -9506,8 +9612,21 @@ delete_debug_insns (void)
 		CODE_LABEL_NUMBER (insn) = debug_label_num++;
 	      }
 	    else
-	      delete_insn (insn);
+	      {
+	        /* If we are preserving the control flow of the source code,
+		   preserve the source locations of the optimized insns that
+		   were replaced by debug insns by adding them to the next
+		   real insn in the stream.  */
+		if (flag_preserve_control_flow
+		    && last
+		    && TREE_CODE (decl) != DEBUG_EXPR_DECL
+		    && INSN_LOCATOR (insn))
+		  add_insn_locator (last, INSN_LOCATOR (insn));
+	        delete_insn (insn);
+	      }
 	  }
+	else if (active_insn_p (insn))
+	  last = insn;
     }
 }
 
@@ -9652,10 +9771,76 @@ variable_tracking_main (void)
   return ret;
 }
 
+/* Entry point for the naive variable tracking pass.  Add notes for indirect
+   calls in each basic block.  */
+
+unsigned int
+variable_tracking_no_opt_main (void)
+{
+  basic_block bb;
+
+  /* Look for every call instruction and add an empty note right after
+     them if needed.  */
+  FOR_EACH_BB (bb)
+    {
+      rtx insn;
+
+      FOR_BB_INSNS (bb, insn)
+	{
+	  rtx x;
+
+	  /* We are at -O0 so do not bother about dealing with SEQUENCEs.  */
+	  if (!INSN_P (insn))
+	    continue;
+	  x = PATTERN (insn);
+	  if (GET_CODE (x) == PARALLEL)
+	    x = XVECEXP (x, 0, 0);
+	  if (GET_CODE (x) == SET)
+	    x = SET_SRC (x);
+	  if (GET_CODE (x) == CALL)
+	    {
+	      x = XEXP (x, 0);
+
+	      /* This pass is to add notes after some call instructions
+		 so that debug info is generated for them.  The goal is to make
+		 it possible to get the call target by looking either at the
+		 call instruction or, when this is not sufficient (like with
+		 indirect calls), at the corresponding debug information.  */
+	      if (!MEM_P (x)
+		  || GET_CODE (XEXP (x, 0)) != SYMBOL_REF
+		  || !SYMBOL_REF_DECL (XEXP (x, 0))
+		  || (TREE_CODE (SYMBOL_REF_DECL (XEXP (x, 0)))
+		      != FUNCTION_DECL))
+		{
+		  /* Emit a not only for calls that have a pattern that is not:
+		     (call (mem (symbol_ref some_function_decl))).  */
+		  rtx note
+		    = emit_note_after (NOTE_INSN_CALL_ARG_LOCATION, insn);
+		  NOTE_VAR_LOCATION (note) = NULL;
+		}
+	    }
+	}
+    }
+
+  return 0;
+}
+
 static bool
 gate_handle_var_tracking (void)
 {
   return (flag_var_tracking && !targetm.delay_vartrack);
+}
+
+static bool
+gate_handle_var_tracking_no_opt (void)
+{
+  /* This pass replaces the regular var-tracking pass when it is not enabled,
+     but only at -O0 (by default, the var-tracking pass is disabled at -O0
+     only).  It is useful only when producing debug information.  */
+  return (optimize == 0
+	  && !flag_var_tracking
+	  && debug_info_level >= DINFO_LEVEL_NORMAL
+	  && debug_hooks->var_location != do_nothing_debug_hooks.var_location);
 }
 
 
@@ -9667,6 +9852,25 @@ struct rtl_opt_pass pass_variable_tracking =
   "vartrack",                           /* name */
   gate_handle_var_tracking,             /* gate */
   variable_tracking_main,               /* execute */
+  NULL,                                 /* sub */
+  NULL,                                 /* next */
+  0,                                    /* static_pass_number */
+  TV_VAR_TRACKING,                      /* tv_id */
+  0,                                    /* properties_required */
+  0,                                    /* properties_provided */
+  0,                                    /* properties_destroyed */
+  0,                                    /* todo_flags_start */
+  TODO_verify_rtl_sharing               /* todo_flags_finish */
+ }
+};
+
+struct rtl_opt_pass pass_variable_tracking_no_opt =
+{
+ {
+  RTL_PASS,
+  "no-opt vartrack",                    /* name */
+  gate_handle_var_tracking_no_opt,      /* gate */
+  variable_tracking_no_opt_main,        /* execute */
   NULL,                                 /* sub */
   NULL,                                 /* next */
   0,                                    /* static_pass_number */

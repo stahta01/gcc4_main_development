@@ -395,6 +395,9 @@ hppa*-*-*)
 lm32*)
 	extra_options="${extra_options} g.opt"
 	;;
+lmp-*-*)
+        cpu_type=lmp
+        ;;
 m32r*-*-*)
         cpu_type=m32r
 	extra_options="${extra_options} g.opt"
@@ -836,7 +839,7 @@ alpha*-dec-*vms*)
 arm-wrs-vxworks)
 	tm_file="elfos.h arm/elf.h arm/aout.h ${tm_file} vx-common.h vxworks.h arm/vxworks.h"
 	extra_options="${extra_options} arm/vxworks.opt"
-	tmake_file="${tmake_file} arm/t-arm arm/t-vxworks"
+	tmake_file="${tmake_file} arm/t-arm arm/t-vxworks-zcx"
 	;;
 arm*-*-freebsd*)
 	tm_file="dbxelf.h elfos.h ${fbsd_tm_file} arm/elf.h arm/aout.h arm/freebsd.h arm/arm.h"
@@ -911,6 +914,14 @@ arm*-*-eabi* | arm*-*-symbianelf* | arm*-*-rtems*)
 	default_use_cxa_atexit=yes
 	tm_file="dbxelf.h elfos.h arm/unknown-elf.h arm/elf.h arm/bpabi.h"
 	tmake_file="arm/t-arm arm/t-arm-elf"
+	if test x${with_arch} = xarmv7; then
+	  # For armv7, only the Thumb-2 instruction set is common to all
+	  # three profiles (armv7-m, armv7-r, armv7-a), so default to it here.
+	  # The t-armv7-elf file will build multilibs for all armv7 variants,
+	  # ARM or Thumb-2 instructions, FPU or not, big or little endian.
+	  tmake_file="${tmake_file} arm/t-armv7-elf"
+	  with_mode=thumb
+	fi
 	case ${target} in
 	arm*-*-eabi*)
 	  tm_file="$tm_file newlib-stdint.h"
@@ -1410,7 +1421,7 @@ i[4567]86-wrs-vxworks|i[4567]86-wrs-vxworksae)
 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h vx-common.h"
 	case ${target} in
 	  *-vxworksae*)
-	    tm_file="${tm_file} vxworksae.h i386/vx-common.h i386/vxworksae.h"
+	    tm_file="${tm_file} vxworksae.h i386/vxworks.h i386/vx-common.h i386/vxworksae.h"
 	    tmake_file="${tmake_file} i386/t-vxworks i386/t-vxworksae"
 	    ;;
 	  *)
@@ -1554,8 +1565,18 @@ ia64*-*-linux*)
 	target_cpu_default="MASK_GNU_AS|MASK_GNU_LD"
 	;;
 ia64*-*-hpux*)
+	case "$with_abi" in
+	"" | ilp32)	;;
+	lp64 )	tm_file="${tm_file} ia64/hpux-lp64.h" ;;
+	*)	echo "Unknown ABI used in --with-abi=$with_abi"
+		exit 1
+		;;
+	esac
 	tm_file="${tm_file} dbxelf.h elfos.h ia64/sysv4.h ia64/hpux.h"
 	tmake_file="ia64/t-ia64 ia64/t-hpux t-slibgcc"
+	if test x$with_system_libunwind != xno ; then
+		tmake_file="${tmake_file} t-libunwind"
+	fi
 	target_cpu_default="MASK_GNU_AS"
 	case x$enable_threads in
 	x | xyes | xposix )
@@ -1604,6 +1625,10 @@ lm32-*-uclinux*)
         tm_file="dbxelf.h elfos.h ${tm_file} gnu-user.h linux.h lm32/uclinux-elf.h"
 	tmake_file="${tmake_file} lm32/t-lm32"
         ;;
+lmp-*-elf*)
+	tm_file="dbxelf.h elfos.h ${tm_file} lmp/elf.h newlib-stdint.h"
+	tmake_file="lmp/t-lmp lmp/t-crtstuff"
+	;;
 m32r-*-elf*)
 	tm_file="dbxelf.h elfos.h newlib-stdint.h ${tm_file}"
  	;;
@@ -2095,21 +2120,34 @@ powerpc-*-linux* | powerpc64-*-linux*)
 		tm_file="rs6000/secureplt.h ${tm_file}"
 	fi
 	;;
-powerpc-wrs-vxworks|powerpc-wrs-vxworksae)
+powerpc-wrs-vxworks|powerpc-wrs-vxworksae|powerpc-wrs-vxworksmils)
 	tm_file="${tm_file} elfos.h freebsd-spec.h rs6000/sysv4.h"
 	tmake_file="${tmake_file} rs6000/t-fprules rs6000/t-ppccomm rs6000/t-vxworks"
 	extra_options="${extra_options} rs6000/sysv4.opt"
 	extra_headers=ppc-asm.h
 	case ${target} in
 	  *-vxworksae*)
-	    tm_file="${tm_file} vx-common.h vxworksae.h rs6000/vxworks.h rs6000/e500.h"
+	    tm_file="${tm_file} vx-common.h vxworksae.h rs6000/vxworks.h rs6000/e500.h rs6000/vxworksae.h"
 	    tmake_file="${tmake_file} rs6000/t-vxworksae"
+	    ;;
+	  *-vxworksmils*)
+	    tm_file="${tm_file} vx-common.h vxworksae.h rs6000/vxworks.h rs6000/e500.h rs6000/vxworksmils.h"
+	    tmake_file="${tmake_file} rs6000/t-vxworksmils"
 	    ;;
 	  *-vxworks*)
 	    tm_file="${tm_file} vx-common.h vxworks.h rs6000/vxworks.h rs6000/e500.h"
 	    ;;
 	esac
 	;;
+powerpc-*-lynxos178)
+        tm_file="${tm_file} rs6000/lynx.h lynx.h"
+        tm_file="${tm_file} rs6000/xcoff.h rs6000/lynx-xcoff.h"
+        tmake_file="rs6000/t-fprules"
+        extra_options="${extra_options} lynx.opt rs6000/lynx-xcoff.opt"
+        thread_file=lynx
+        gnu_ld=yes
+        gas=yes
+        ;;
 powerpc-*-lynxos*)
 	xm_defines=POSIX
 	tm_file="${tm_file} dbxelf.h elfos.h rs6000/sysv4.h rs6000/lynx.h lynx.h"
@@ -2912,11 +2950,36 @@ if test x$with_cpu = x ; then
     mips*-*-vxworks)
       with_arch=mips2
       ;;
-    sparc-leon*-*)
-      with_cpu=v8;
+    powerpc*-*-*spe*)
+      if test x$enable_e500_double = xyes; then
+         with_cpu=8548
+      else
+         with_cpu=8540
+      fi       
       ;;
     sparc*-*-*)
-      with_cpu="`echo ${target} | sed 's/-.*$//'`"
+      case ${target} in
+	*-leon-*)
+	  with_cpu=leon
+	  ;;
+	*-leon[3-9]*)
+	  with_cpu=leon3
+	  ;;
+	*)
+	  with_cpu="`echo ${target} | sed 's/-.*$//'`"
+	  ;;
+      esac
+      ;;
+  esac
+
+  # e500 is canonicalized to powerpc and needs a default cpu selection
+
+  case ${target_noncanonical} in
+    e500v1*)
+      with_cpu=8540
+      ;;
+    e500v2*)
+      with_cpu=8548
       ;;
   esac
 
@@ -3283,6 +3346,10 @@ case "${target}" in
 		done
 		;;
 
+	ia64-*-hpux*)
+		supported_defaults="abi"
+		;;
+
 	mips*-*-*)
 		supported_defaults="abi arch arch_32 arch_64 float tune tune_32 tune_64 divide llsc mips-plt synci"
 
@@ -3456,7 +3523,7 @@ case "${target}" in
 			case ${val} in
 			"" | sparc | sparcv9 | sparc64 \
 			| v7 | cypress \
-			| v8 | supersparc | hypersparc | leon \
+			| v8 | supersparc | hypersparc | leon | leon3 \
 			| sparclite | f930 | f934 | sparclite86x \
 			| sparclet | tsc701 \
 			| v9 | ultrasparc | ultrasparc3 | niagara | niagara2 \
@@ -3605,25 +3672,11 @@ case ${target} in
 		c_target_objs="${c_target_objs} rs6000-c.o"
 		cxx_target_objs="${cxx_target_objs} rs6000-c.o"
 		tmake_file="rs6000/t-rs6000 ${tmake_file}"
-
-                if test x$enable_e500_double = xyes
-                then
-                        tm_file="$tm_file rs6000/e500-double.h"
-                fi
 		;;
 
 	sh[123456ble]*-*-* | sh-*-*)
 		c_target_objs="${c_target_objs} sh-c.o"
 		cxx_target_objs="${cxx_target_objs} sh-c.o"
-		;;
-
-	sparc-leon*-*)
-		if test x$with_tune = x ; then
-		  with_tune=leon;
-		fi
-
-		# The SPARC port checks this value at compile-time.
-		target_cpu_default2="TARGET_CPU_$with_cpu"
 		;;
 
 	sparc*-*-*)
@@ -3636,6 +3689,17 @@ case ${target} in
 			with_cpu=v9
 			;;
 		esac
+
+		if test x$with_tune = x ; then
+		      case ${target} in
+		      *-leon-*)
+			  with_tune=leon
+			  ;;
+		      *-leon[3-9]*)
+			  with_tune=leon3
+			  ;;
+		      esac
+		fi
 
 		# The SPARC port checks this value at compile-time.
 		target_cpu_default2="TARGET_CPU_$with_cpu"

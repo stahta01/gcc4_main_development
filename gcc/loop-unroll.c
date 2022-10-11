@@ -278,7 +278,7 @@ decide_unrolling_and_peeling (int flags)
 	fprintf (dump_file, "\n;; *** Considering loop %d ***\n", loop->num);
 
       /* Do not peel cold areas.  */
-      if (optimize_loop_for_size_p (loop))
+      if (!loop->hint_unroll && optimize_loop_for_size_p (loop))
 	{
 	  if (dump_file)
 	    fprintf (dump_file, ";; Not considering loop, cold area\n");
@@ -299,6 +299,14 @@ decide_unrolling_and_peeling (int flags)
 	{
 	  if (dump_file)
 	    fprintf (dump_file, ";; Not considering loop, is not innermost\n");
+	  continue;
+	}
+
+      /* Skip loops specifically marked.  */
+      if (loop->hint_no_unroll)
+	{
+	  if (dump_file)
+	    fprintf (dump_file, ";; Not considering loop, marked no-unroll\n");
 	  continue;
 	}
 
@@ -329,10 +337,13 @@ decide_peel_once_rolling (struct loop *loop, int flags ATTRIBUTE_UNUSED)
     fprintf (dump_file, "\n;; Considering peeling once rolling loop\n");
 
   /* Is the loop small enough?  */
-  if ((unsigned) PARAM_VALUE (PARAM_MAX_ONCE_PEELED_INSNS) < loop->ninsns)
+  if (!loop->hint_unroll
+      && loop->ninsns > (unsigned) PARAM_VALUE (PARAM_MAX_ONCE_PEELED_INSNS))
     {
       if (dump_file)
-	fprintf (dump_file, ";; Not considering loop, is too big\n");
+	fprintf (dump_file, ";; Not peeling loop once %d "
+		 "(--param max-once-peeled-insns limit reached).\n",
+		 loop->num);
       return;
     }
 
@@ -362,7 +373,6 @@ decide_peel_once_rolling (struct loop *loop, int flags ATTRIBUTE_UNUSED)
 static void
 decide_peel_completely (struct loop *loop, int flags ATTRIBUTE_UNUSED)
 {
-  unsigned npeel;
   struct niter_desc *desc;
 
   if (dump_file)
@@ -377,7 +387,7 @@ decide_peel_completely (struct loop *loop, int flags ATTRIBUTE_UNUSED)
     }
 
   /* Do not peel cold areas.  */
-  if (optimize_loop_for_size_p (loop))
+  if (!loop->hint_unroll && optimize_loop_for_size_p (loop))
     {
       if (dump_file)
 	fprintf (dump_file, ";; Not considering loop, cold area\n");
@@ -390,19 +400,6 @@ decide_peel_completely (struct loop *loop, int flags ATTRIBUTE_UNUSED)
       if (dump_file)
 	fprintf (dump_file,
 		 ";; Not considering loop, cannot duplicate\n");
-      return;
-    }
-
-  /* npeel = number of iterations to peel.  */
-  npeel = PARAM_VALUE (PARAM_MAX_COMPLETELY_PEELED_INSNS) / loop->ninsns;
-  if (npeel > (unsigned) PARAM_VALUE (PARAM_MAX_COMPLETELY_PEEL_TIMES))
-    npeel = PARAM_VALUE (PARAM_MAX_COMPLETELY_PEEL_TIMES);
-
-  /* Is the loop small enough?  */
-  if (!npeel)
-    {
-      if (dump_file)
-	fprintf (dump_file, ";; Not considering loop, is too big\n");
       return;
     }
 
@@ -421,15 +418,25 @@ decide_peel_completely (struct loop *loop, int flags ATTRIBUTE_UNUSED)
       return;
     }
 
-  if (desc->niter > npeel - 1)
+  if (!loop->hint_unroll
+      && desc->niter
+         > (unsigned) PARAM_VALUE (PARAM_MAX_COMPLETELY_PEEL_TIMES))
     {
       if (dump_file)
-	{
-	  fprintf (dump_file,
-		   ";; Not peeling loop completely, rolls too much (");
-	  fprintf (dump_file, HOST_WIDEST_INT_PRINT_DEC, desc->niter);
-	  fprintf (dump_file, " iterations > %d [maximum peelings])\n", npeel);
-	}
+	fprintf (dump_file, ";; Not peeling loop completely %d"
+		 "(--param max-completely-peeled-times limit reached).\n",
+		 loop->num);
+      return;
+    }
+
+  if (!loop->hint_unroll
+      && loop->ninsns
+         > (unsigned) PARAM_VALUE (PARAM_MAX_COMPLETELY_PEELED_INSNS))
+    {
+      if (dump_file)
+	fprintf (dump_file, ";; Not peeling loop completely %d "
+		 "(--param max-completely-peeled-insns limit reached).\n",
+		 loop->num);
       return;
     }
 

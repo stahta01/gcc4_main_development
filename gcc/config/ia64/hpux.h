@@ -24,6 +24,11 @@ along with GCC; see the file COPYING3.  If not see
 #undef  TARGET_HPUX
 #define TARGET_HPUX 1
 
+/* Default to ILP32 ABI (unless hpux-lp64.h defines this macro).  */
+#ifndef TARGET_DEFAULT_ILP32
+#define TARGET_DEFAULT_ILP32 MASK_ILP32
+#endif
+
 #undef WCHAR_TYPE
 #define WCHAR_TYPE "unsigned int"
 
@@ -60,8 +65,18 @@ do {							\
    affect only aCC's C++ library (Rogue Wave-derived) which we do not
    use, and they violate the user's name space.  */
 
+/* Spec switches to use to specify lp64 or ilp32 specific files.
+   The default depends on the default ABI model.  */
+#if TARGET_DEFAULT_ILP32 == MASK_ILP32
+#define SPEC32_OPT "!mlp64"
+#define SPEC64_OPT "mlp64"
+#else
+#define SPEC32_OPT "milp32"
+#define SPEC64_OPT "!milp32"
+#endif
+
 #undef  ASM_EXTRA_SPEC
-#define ASM_EXTRA_SPEC "%{milp32:-milp32} %{mlp64:-mlp64}"
+#define ASM_EXTRA_SPEC "%{" SPEC32_OPT ":-milp32} %{" SPEC64_OPT ":-mlp64}"
 
 #ifndef USE_GAS
 #define AS_NEEDS_DASH_FOR_PIPED_INPUT
@@ -79,8 +94,8 @@ do {							\
 
 #undef STARTFILE_SPEC
 #define STARTFILE_SPEC "%{!shared:%{static:crt0%O%s} \
-			  %{mlp64:/usr/lib/hpux64/unix98%O%s} \
-			  %{!mlp64:/usr/lib/hpux32/unix98%O%s}}"
+			  %{" SPEC64_OPT ":/usr/lib/hpux64/unix98%O%s} \
+			  %{" SPEC32_OPT ":/usr/lib/hpux32/unix98%O%s}}"
 
 #undef LINK_SPEC
 #define LINK_SPEC \
@@ -94,13 +109,24 @@ do {							\
 #define LIB_SPEC \
   "%{!shared: \
      %{mt|pthread:%{fopenmp:-lrt} -lpthread} \
-     %{p:%{!mlp64:-L/usr/lib/hpux32/libp} \
-	 %{mlp64:-L/usr/lib/hpux64/libp} -lprof} \
-     %{pg:%{!mlp64:-L/usr/lib/hpux32/libp} \
-	  %{mlp64:-L/usr/lib/hpux64/libp} -lgprof} \
+     %{p:%{" SPEC32_OPT ":-L/usr/lib/hpux32/libp} \
+	 %{" SPEC64_OPT ":-L/usr/lib/hpux64/libp} -lprof} \
+     %{pg:%{" SPEC32_OPT ":-L/usr/lib/hpux32/libp} \
+	  %{" SPEC64_OPT ":-L/usr/lib/hpux64/libp} -lgprof} \
      %{!symbolic:-lc}}"
 
+#ifndef USE_LIBUNWIND_EXCEPTIONS
+#undef LINK_GCC_C_SEQUENCE_SPEC
+#define LINK_GCC_C_SEQUENCE_SPEC \
+  "%G %L %G %{static|static-libgcc:-luca} \
+	    %{!static:%{!static-libgcc:%{!shared:%{!shared-libgcc:-luca}}}}"
+#endif
+
+#if TARGET_DEFAULT_ILP32 == MASK_ILP32
 #define MULTILIB_DEFAULTS { "milp32" }
+#else
+#define MULTILIB_DEFAULTS { "mlp64" }
+#endif
 
 /* A C expression whose value is zero if pointers that need to be extended
    from being `POINTER_SIZE' bits wide to `Pmode' are sign-extended and
@@ -113,10 +139,7 @@ do {							\
 
 #undef TARGET_DEFAULT
 #define TARGET_DEFAULT \
-  (MASK_DWARF2_ASM | MASK_BIG_ENDIAN | MASK_ILP32)
-
-/* ??? Might not be needed anymore.  */
-#define MEMBER_TYPE_FORCES_BLK(FIELD, MODE) ((MODE) == TFmode)
+  (MASK_DWARF2_ASM | MASK_BIG_ENDIAN | TARGET_DEFAULT_ILP32)
 
 /* ASM_OUTPUT_EXTERNAL_LIBCALL defaults to just a globalize_label call,
    but that doesn't put out the @function type information which causes
@@ -228,3 +251,10 @@ do {								\
 #define TARGET_ASM_FUNCTION_SECTION ia64_hpux_function_section
 
 #define TARGET_POSIX_IO
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1
+
+/* Minimum amount of stack required to recover from an anticipated stack
+   overflow detection.  */
+#define STACK_CHECK_PROTECT (24 * 1024)

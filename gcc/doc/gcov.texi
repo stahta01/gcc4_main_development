@@ -40,6 +40,7 @@ test code coverage in your programs.
 @menu
 * Gcov Intro::                  Introduction to gcov.
 * Invoking Gcov::               How to use gcov.
+* Precise Decision Coverage::   Doing precise decision coverage with gcov.
 * Gcov and Optimization::       Using gcov with GCC optimization.
 * Gcov Data Files::             The files used by gcov.
 * Cross-profiling::             Data file relocation.
@@ -477,6 +478,55 @@ profiling code first attempts to read in an existing @file{.gcda} file; if
 the file doesn't match the executable (differing number of basic block
 counts) it will ignore the contents of the file.  It then adds in the
 new execution counts and finally writes the data to the file.
+
+@node Precise Decision Coverage
+@section Precise Decision Coverage
+
+@command{gcov} can genuinely perform decision coverage by using option
+@option{-b} (i.e. showing that each branch was taken).  But you can even
+go further, showing that each individual subcondition is covered and can
+modify the global decision.  For example:
+
+@smallexample
+int is_cond (int a, int b, int c)
+@{
+  return (a >= 0) || (b == 0 && c != 0);
+@}
+@end smallexample
+
+You have to write testcases (the minimum is 4 here) to show that each
+argument can make the function return 0.
+
+In principle, you can achieve this result with @command{gcov} by using a
+particular coding style: always use short-circuit boolean operators.
+This is a very natural coding style in C as the boolean operators
+@code{||} and @code{&&} are short-circuit operators.
+
+A consequence of the short-circuit operator is that a decision is made
+for each individual subcondition.  With a properly written test harness,
+the result of @samp{gcov -b -c} on the previous example can be:
+
+@smallexample
+        -:    1:int is_cond (int a, int b, int c)
+function is_cond called 4 returned 100% blocks executed 100%
+        4:    2:@{
+        4:    3:  return (a >= 0) || (b == 0 && c != 0);
+branch  0 taken 3 (fallthrough)
+branch  1 taken 1
+branch  2 taken 2 (fallthrough)
+branch  3 taken 1
+branch  4 taken 1 (fallthrough)
+branch  5 taken 1
+        -:    4:@}
+@end smallexample
+
+There are 3 decisions and thus 6 branches (1 for the true path and one for
+the false path).  And with the 4 tests all the branches are taken.
+
+By default, the GCC optimizers may defeat this approach by performing
+transformations that break the low-level control flow representativity
+of the source-level control flow.  @option{-fpreserve-control-flow} can
+be passed on the command line to disable these transformations.
 
 @node Gcov and Optimization
 @section Using @command{gcov} with GCC Optimization

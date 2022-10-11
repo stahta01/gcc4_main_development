@@ -1152,6 +1152,13 @@ default_mode_dependent_address_p (const_rtx addr ATTRIBUTE_UNUSED)
 }
 
 bool
+default_may_narrow_access_to (rtx addr,
+                              enum machine_mode mode ATTRIBUTE_UNUSED)
+{
+  return !mode_dependent_address_p (addr);
+}
+
+bool
 default_target_option_valid_attribute_p (tree ARG_UNUSED (fndecl),
 					 tree ARG_UNUSED (name),
 					 tree ARG_UNUSED (args),
@@ -1454,6 +1461,15 @@ default_pch_valid_p (const void *data_p, size_t len)
       }
 
   return NULL;
+}
+
+/* Default version of member_type_forces_blk.  */
+
+bool
+default_member_type_forces_blk (const_tree ARG_UNUSED (field),
+				enum machine_mode ARG_UNUSED (mode))
+{
+  return false;
 }
 
 #include "gt-targhooks.h"

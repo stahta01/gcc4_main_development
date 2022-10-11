@@ -1,5 +1,6 @@
 /* PR debug/43150 */
-/* { dg-do run } */
+/* xfailed for AdaCore per LC14-010 */
+/* { dg-do run { xfail *-*-* } } */
 /* { dg-options "-g" } */
 
 void __attribute__((noinline))
@@ -13,15 +14,15 @@ int __attribute__((noinline))
 f1 (int i)
 {
   char a[i + 1];
-  a[0] = 5;		/* { dg-final { gdb-test 17 "i" "5" } } */
-  return a[0];		/* { dg-final { gdb-test 17 "sizeof (a)" "6" } } */
+  a[0] = 5;		/* { dg-final { gdb-test 17 "i" "5" { xfail *-*-* } } } */
+  return a[0];		/* { dg-final { gdb-test 17 "sizeof (a)" "6" { xfail *-*-* } } } */
 }
 
 int __attribute__((noinline))
 f2 (int i)
 {
-  short a[i * 2 + 7];	/* { dg-final { gdb-test 24 "i" "5" } } */
-  bar (a);		/* { dg-final { gdb-test 24 "sizeof (a)" "17 * sizeof (short)" } } */
+  short a[i * 2 + 7];	/* { dg-final { gdb-test 24 "i" "5"  { xfail *-*-* } } } */
+  bar (a);		/* { dg-final { gdb-test 24 "sizeof (a)" "17 * sizeof (short)" { xfail *-*-* } } } */
   return a[i + 4];
 }
 

@@ -26,10 +26,8 @@ along with GCC; see the file COPYING3.  If not see
 enum libfunc_index
 {
   LTI_abort,
-  LTI_memcpy,
   LTI_memmove,
   LTI_memcmp,
-  LTI_memset,
   LTI_setbits,
 
   LTI_setjmp,
@@ -79,10 +77,8 @@ extern struct target_libfuncs *this_target_libfuncs;
 /* Accessor macros for libfunc_table.  */
 
 #define abort_libfunc	(libfunc_table[LTI_abort])
-#define memcpy_libfunc	(libfunc_table[LTI_memcpy])
 #define memmove_libfunc	(libfunc_table[LTI_memmove])
 #define memcmp_libfunc	(libfunc_table[LTI_memcmp])
-#define memset_libfunc	(libfunc_table[LTI_memset])
 #define setbits_libfunc	(libfunc_table[LTI_setbits])
 
 #define setjmp_libfunc	(libfunc_table[LTI_setjmp])
@@ -99,6 +95,7 @@ extern struct target_libfuncs *this_target_libfuncs;
 #define gcov_flush_libfunc	(libfunc_table[LTI_gcov_flush])
 
 /* In explow.c */
+extern void set_stack_check_symbol (const char *);
 extern void set_stack_check_libfunc (const char *);
 
 #endif /* GCC_LIBFUNCS_H */

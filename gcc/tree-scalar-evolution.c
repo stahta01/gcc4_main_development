@@ -3370,6 +3370,8 @@ scev_const_prop (void)
 	  def = force_gimple_operand_gsi (&bsi, def, false, NULL_TREE,
       					  true, GSI_SAME_STMT);
 	  ass = gimple_build_assign (rslt, def);
+	  gimple_set_location (ass,
+			       gimple_phi_arg_location (phi, exit->dest_idx));
 	  gsi_insert_before (&bsi, ass, GSI_SAME_STMT);
 	}
     }

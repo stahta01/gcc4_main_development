@@ -1622,8 +1622,8 @@ may_be_unaligned_p (tree ref, tree step)
   HOST_WIDE_INT bitpos;
   tree toffset;
   enum machine_mode mode;
-  int unsignedp, volatilep;
-  unsigned base_align;
+  int unsignedp, reversep, volatilep;
+  unsigned base_align, align;
 
   /* TARGET_MEM_REFs are translated directly to valid MEMs on the target,
      thus they are not misaligned.  */
@@ -1634,27 +1634,28 @@ may_be_unaligned_p (tree ref, tree step)
      does to check whether the object must be loaded by parts when
      STRICT_ALIGNMENT is true.  */
   base = get_inner_reference (ref, &bitsize, &bitpos, &toffset, &mode,
-			      &unsignedp, &volatilep, true);
+			      &unsignedp, &reversep, &volatilep, true);
   base_type = TREE_TYPE (base);
   base_align = get_object_alignment (base);
   base_align = MAX (base_align, TYPE_ALIGN (base_type));
 
-  if (mode != BLKmode)
-    {
-      unsigned mode_align = GET_MODE_ALIGNMENT (mode);
+  /* If the mode is BLKmode, then a block move will be used with the
+     alignment of the object's type.  */
+  if (mode == BLKmode)
+    align = TYPE_ALIGN (TREE_TYPE (ref));
+  else
+    align = GET_MODE_ALIGNMENT (mode);
 
-      if (base_align < mode_align
-	  || (bitpos % mode_align) != 0
-	  || (bitpos % BITS_PER_UNIT) != 0)
-	return true;
+  if (base_align < align
+      || (bitpos % align) != 0
+      || (bitpos % BITS_PER_UNIT) != 0)
+    return true;
 
-      if (toffset
-	  && (highest_pow2_factor (toffset) * BITS_PER_UNIT) < mode_align)
-	return true;
+  if (toffset && (highest_pow2_factor (toffset) * BITS_PER_UNIT) < align)
+    return true;
 
-      if ((highest_pow2_factor (step) * BITS_PER_UNIT) < mode_align)
-	return true;
-    }
+  if ((highest_pow2_factor (step) * BITS_PER_UNIT) < align)
+    return true;
 
   return false;
 }
@@ -1671,9 +1672,26 @@ may_be_nonaddressable_p (tree expr)
 	 target, thus they are always addressable.  */
       return false;
 
+    case MEM_REF:
+      /* Likewise for MEM_REFs, modulo the storage order.  */
+      return REF_REVERSE_STORAGE_ORDER (expr);
+
+    case BIT_FIELD_REF:
+      if (REF_REVERSE_STORAGE_ORDER (expr))
+	return true;
+      return may_be_nonaddressable_p (TREE_OPERAND (expr, 0));
+
     case COMPONENT_REF:
+      if (TYPE_REVERSE_STORAGE_ORDER (TREE_TYPE (TREE_OPERAND (expr, 0))))
+	return true;
       return DECL_NONADDRESSABLE_P (TREE_OPERAND (expr, 1))
 	     || may_be_nonaddressable_p (TREE_OPERAND (expr, 0));
+
+    case ARRAY_REF:
+    case ARRAY_RANGE_REF:
+      if (TYPE_REVERSE_STORAGE_ORDER (TREE_TYPE (TREE_OPERAND (expr, 0))))
+	return true;
+      return may_be_nonaddressable_p (TREE_OPERAND (expr, 0));
 
     case VIEW_CONVERT_EXPR:
       /* This kind of view-conversions may wrap non-addressable objects
@@ -1683,11 +1701,6 @@ may_be_nonaddressable_p (tree expr)
       if (is_gimple_reg (TREE_OPERAND (expr, 0))
 	  || !is_gimple_addressable (TREE_OPERAND (expr, 0)))
 	return true;
-
-      /* ... fall through ... */
-
-    case ARRAY_REF:
-    case ARRAY_RANGE_REF:
       return may_be_nonaddressable_p (TREE_OPERAND (expr, 0));
 
     CASE_CONVERT:
@@ -2814,7 +2827,7 @@ prepare_decl_rtl (tree *expr_p, int *ws, void *data)
 	   expr_p = &TREE_OPERAND (*expr_p, 0))
 	continue;
       obj = *expr_p;
-      if (DECL_P (obj) && !DECL_RTL_SET_P (obj))
+      if (DECL_P (obj) && HAS_RTL_P (obj) && !DECL_RTL_SET_P (obj))
         x = produce_memory_decl_rtl (obj, regno);
       break;
 
@@ -3274,7 +3287,7 @@ get_address_cost (bool symbol_present, bool var_present,
 
       for (i = width; i >= 0; i--)
 	{
-	  off = -((HOST_WIDE_INT) 1 << i);
+	  off = -((unsigned HOST_WIDE_INT) 1 << i);
 	  XEXP (addr, 1) = gen_int_mode (off, address_mode);
 	  if (memory_address_addr_space_p (mem_mode, addr, as))
 	    break;
@@ -3283,7 +3296,7 @@ get_address_cost (bool symbol_present, bool var_present,
 
       for (i = width; i >= 0; i--)
 	{
-	  off = ((HOST_WIDE_INT) 1 << i) - 1;
+	  off = ((unsigned HOST_WIDE_INT) 1 << i) - 1;
 	  XEXP (addr, 1) = gen_int_mode (off, address_mode);
 	  if (memory_address_addr_space_p (mem_mode, addr, as))
 	    break;
@@ -3734,13 +3747,14 @@ split_address_cost (struct ivopts_data *data,
   HOST_WIDE_INT bitpos;
   tree toffset;
   enum machine_mode mode;
-  int unsignedp, volatilep;
+  int unsignedp, reversep, volatilep;
 
   core = get_inner_reference (addr, &bitsize, &bitpos, &toffset, &mode,
-			      &unsignedp, &volatilep, false);
+			      &unsignedp, &reversep, &volatilep, false);
 
   if (toffset != 0
       || bitpos % BITS_PER_UNIT != 0
+      || reversep
       || TREE_CODE (core) != VAR_DECL)
     {
       *symbol_present = false;
@@ -4296,7 +4310,11 @@ determine_use_iv_cost_address (struct ivopts_data *data,
   if (cand->ainc_use == use)
     {
       if (can_autoinc)
-	cost.cost -= cand->cost_step;
+	{
+	  cost.cost -= cand->cost_step;
+	  if (cost.cost < 0)
+	    cost.cost = 0;
+	}
       /* If we generated the candidate solely for exploiting autoincrement
 	 opportunities, and it turns out it can't be used, set the cost to
 	 infinity to make sure we ignore it.  */
@@ -6359,6 +6377,73 @@ rewrite_use_address (struct ivopts_data *data,
   ok = get_computation_aff (data->current_loop, use, cand, use->stmt, &aff);
   gcc_assert (ok);
   unshare_aff_combination (&aff);
+
+  /* Try to build common patterns in addresses for later CSE.  */
+  if (aff.n > 1)
+    {
+      tree var = var_at_stmt (data->current_loop, cand, use->stmt);
+      aff_tree to_add;
+      unsigned i;
+      bool changed = false;
+
+      aff_combination_zero (&to_add, aff.type);
+
+      for (i = 0; i < aff.n; i++)
+	{
+	  tree old_elt, new_elt;
+	  aff_tree current;
+
+	  new_elt = old_elt = aff.elts[i].val;
+	  aff_combination_zero (&current, aff.type);
+
+	  while (TREE_CODE (new_elt) == SSA_NAME && new_elt != var)
+	    {
+	      gimple def = SSA_NAME_DEF_STMT (new_elt);
+	      if (!(is_gimple_assign (def)
+		    && gimple_assign_lhs (def) == new_elt))
+		break;
+
+	      if (gimple_assign_rhs_code (def) == NOP_EXPR)
+		new_elt = gimple_assign_rhs1 (def);
+	      else if (gimple_assign_rhs_code (def) == PLUS_EXPR
+		       && TREE_CODE (gimple_assign_rhs2 (def)) == INTEGER_CST)
+		{
+		  aff_tree cst;
+		  aff_combination_const (&cst, aff.type,
+					 TREE_INT_CST
+					 (gimple_assign_rhs2 (def)));
+		  aff_combination_add (&current, &cst);
+		  new_elt = gimple_assign_rhs1 (def);
+		}
+	      else
+		break;
+	    }
+
+	  if (new_elt != old_elt)
+	    {
+	      aff_tree var;
+	      double_int scale;
+
+	      tree_to_aff_combination (new_elt, aff.type, &var);
+	      aff_combination_add (&current, &var);
+
+	      /* Accumulate the new terms to TO_ADD, so that we do not modify
+		 AFF while traversing it; include the term -coef * OLD_ELT to
+		 remove it from AFF.  */
+	      scale = aff.elts[i].coef;
+	      aff_combination_scale (&current, scale);
+	      aff_combination_add (&to_add, &current);
+	      aff_combination_zero (&current, aff.type);
+	      aff_combination_add_elt (&current, old_elt,
+				       double_int_neg (scale));
+	      aff_combination_add (&to_add, &current);
+	      changed = true;
+	    }
+	}
+
+	if (changed)
+	  aff_combination_add (&aff, &to_add);
+    }
 
   /* To avoid undefined overflow problems, all IV candidates use unsigned
      integer types.  The drawback is that this makes it impossible for

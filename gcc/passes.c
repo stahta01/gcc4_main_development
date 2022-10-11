@@ -1222,6 +1222,10 @@ init_optimization_passes (void)
 	     alias information also rewrites no longer addressed
 	     locals into SSA form if possible.  */
 	  NEXT_PASS (pass_build_ealias);
+	  /* SRA refuses to scalarize objects that appear in a statement
+	     that can throw internally so we need to cleanup the EH tree
+	     early to remove handlers that contain only clobbers.  */
+	  NEXT_PASS (pass_cleanup_eh);
 	  NEXT_PASS (pass_sra_early);
 	  NEXT_PASS (pass_fre);
 	  NEXT_PASS (pass_copy_prop);
@@ -1230,7 +1234,6 @@ init_optimization_passes (void)
 	  NEXT_PASS (pass_early_ipa_sra);
 	  NEXT_PASS (pass_tail_recursion);
 	  NEXT_PASS (pass_convert_switch);
-          NEXT_PASS (pass_cleanup_eh);
           NEXT_PASS (pass_profile);
           NEXT_PASS (pass_local_pure_const);
 	  /* Split functions creates parts that are not run through
@@ -1416,6 +1419,7 @@ init_optimization_passes (void)
       NEXT_PASS (pass_tm_memopt);
       NEXT_PASS (pass_tm_edges);
     }
+  NEXT_PASS (pass_dce_O0);
   NEXT_PASS (pass_lower_complex_O0);
   NEXT_PASS (pass_cleanup_eh);
   NEXT_PASS (pass_lower_resx);
@@ -1517,6 +1521,7 @@ init_optimization_passes (void)
 	  NEXT_PASS (pass_compute_alignments);
 	  NEXT_PASS (pass_duplicate_computed_gotos);
 	  NEXT_PASS (pass_variable_tracking);
+	  NEXT_PASS (pass_variable_tracking_no_opt);
 	  NEXT_PASS (pass_free_cfg);
 	  NEXT_PASS (pass_machine_reorg);
 	  NEXT_PASS (pass_cleanup_barriers);

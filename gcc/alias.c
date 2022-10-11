@@ -1993,6 +1993,14 @@ memrefs_conflict_p (int xsize, rtx x, int ysize, rtx y, HOST_WIDE_INT c)
 	    return memrefs_conflict_p (xsize, x0, ysize, y0, c);
 	  if (rtx_equal_for_memref_p (x0, y0))
 	    return memrefs_conflict_p (xsize, x1, ysize, y1, c);
+
+	  /* Non-legitimate address expressions in debug insns can change the
+	     relative canonicalization wrt legitimate address expressions.  */
+	  if (rtx_equal_for_memref_p (x1, y0))
+	    return memrefs_conflict_p (xsize, x0, ysize, y1, c);
+	  if (rtx_equal_for_memref_p (x0, y1))
+	    return memrefs_conflict_p (xsize, x1, ysize, y0, c);
+
 	  if (CONST_INT_P (x1))
 	    {
 	      if (CONST_INT_P (y1))
@@ -2197,9 +2205,11 @@ nonoverlapping_component_refs_p (const_tree x, const_tree y)
 
     found:
       /* If we're left with accessing different fields of a structure,
-	 then no overlap.  */
+	 then no overlap.
+	 ??? Pointer inequality is too fragile in the LTO compiler.  */
       if (TREE_CODE (typex) == RECORD_TYPE
-	  && fieldx != fieldy)
+	  && fieldx != fieldy
+	  && DECL_NAME (fieldx) != DECL_NAME (fieldy))
 	return true;
 
       /* The comparison on the current field failed.  If we're accessing

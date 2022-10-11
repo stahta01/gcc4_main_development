@@ -158,6 +158,14 @@ bool flag_stack_usage_info = false
 Variable
 int flag_debug_asm
 
+; Language front-ends that support multiple instantiations of a given
+; source template (such as Ada with generics) may enable this flag, and
+; provide instance identifiers for the linemaps, so that discriminators in
+; DWARF debugging information carry these instance identifiers, allowing
+; external tools to identify which instance a given instruction comes from.
+Variable
+int flag_debug_instances = 0
+
 ; -dP causes the rtl to be emitted as a comment in assembly.
 Variable
 int flag_dump_rtl_in_asm
@@ -876,6 +884,14 @@ fbtr-bb-exclusive
 Common Report Var(flag_btr_bb_exclusive) Optimization
 Restrict target load migration not to re-use registers in any basic block
 
+fcallgraph-info
+Common Report RejectNegative Var(flag_callgraph_info) Init(NO_CALLGRAPH_INFO);
+Output callgraph information on a per-file basis
+
+fcallgraph-info=
+Common Report RejectNegative Joined
+Output callgraph information on a per-file basis with decorations
+
 fcall-saved-
 Common Joined RejectNegative Var(common_deferred_options) Defer
 -fcall-saved-<register>	Mark <register> as being preserved across functions
@@ -977,6 +993,10 @@ fdelayed-branch
 Common Report Var(flag_delayed_branch) Optimization
 Attempt to fill delay slots of branch instructions
 
+fdelete-dead-exceptions
+Common Report Var(flag_delete_dead_exceptions) Init(0)
+Delete dead instructions that may throw exceptions
+
 fdelete-null-pointer-checks
 Common Report Var(flag_delete_null_pointer_checks) Init(1) Optimization
 Delete useless null pointer checks
@@ -1018,6 +1038,10 @@ fdump-
 Common Joined RejectNegative Var(common_deferred_options) Defer
 -fdump-<type>	Dump various compiler internals to a file
 
+fdump-xref
+Common Var(flag_dump_xref) Init(0)
+Generate source cross reference information
+
 fdump-final-insns
 Driver RejectNegative
 
@@ -1036,6 +1060,10 @@ Suppress output of addresses in debugging dumps
 fdump-passes
 Common Var(flag_dump_passes) Init(0)
 Dump optimization passes
+
+fdump-scos
+Common RejectNegative Var(flag_dump_scos) Init(0)
+Dump Source Coverage Obligations
 
 fdump-unnumbered
 Common Report Var(flag_dump_unnumbered)
@@ -1084,6 +1112,10 @@ Perform a number of minor, expensive optimizations
 fexcess-precision=
 Common Joined RejectNegative Enum(excess_precision) Var(flag_excess_precision_cmdline) Init(EXCESS_PRECISION_DEFAULT)
 -fexcess-precision=[fast|standard]	Specify handling of excess floating-point precision
+
+fextra-slocs
+Common Var(flag_extra_slocs) Init(0)
+Generate extra sloc information on expression trees
 
 Enum
 Name(excess_precision) Type(enum excess_precision) UnknownError(unknown excess precision style %qs)
@@ -1775,6 +1807,10 @@ free
 Common Report Var(flag_ree) Init(0)
 Turn on Redundant Extensions Elimination pass.
 
+fpreserve-control-flow
+Common Report Var(flag_preserve_control_flow) Init(0)
+Preserve source-level control flow as much as possible.
+
 fshow-column
 Common Report Var(flag_show_column) Init(1)
 Show column numbers in diagnostics, when available.  Default on
@@ -1902,6 +1938,10 @@ ftracer
 Common Report Var(flag_tracer)
 Perform superblock formation via tail duplication
 
+ftrampolines
+Common Report Var(flag_trampolines) Init(0)
+Always generate trampolines for pointers to nested functions
+
 ; Zero means that floating-point math operations cannot generate a
 ; (user-visible) trap.  This is the case, for example, in nonstop
 ; IEEE 754 arithmetic.
@@ -1950,7 +1990,7 @@ Common Report Var(flag_tree_switch_conversion) Optimization
 Perform conversions of switch initializations.
 
 ftree-dce
-Common Report Var(flag_tree_dce) Optimization
+Common Report Var(flag_tree_dce) Init(1) Optimization
 Enable SSA dead code elimination optimization on trees
 
 ftree-dominator-opts
@@ -2209,7 +2249,7 @@ Common JoinedOrMissing Negative(gdwarf-)
 Generate debug information in COFF format
 
 gdwarf-
-Common Joined UInteger Var(dwarf_version) Init(2) Negative(gstabs)
+Common Joined UInteger Var(dwarf_version) Init(-1) Negative(gstabs)
 Generate debug information in DWARF v2 (or later) format
 
 ggdb

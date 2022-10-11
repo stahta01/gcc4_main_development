@@ -79,6 +79,8 @@ extern const char *output_fix_trunc (rtx, rtx*, bool);
 extern const char *output_fp_compare (rtx, rtx*, bool, bool);
 extern const char *output_adjust_stack_and_probe (rtx);
 extern const char *output_probe_stack_range (rtx, rtx);
+extern const char *output_cond_trap (rtx);
+extern const char *ix86_output_establisher_frame (rtx);
 
 extern void ix86_expand_clear (rtx);
 extern void ix86_expand_move (enum machine_mode, rtx[]);
@@ -250,6 +252,8 @@ extern tree i386_pe_mangle_assembler_name (const char *);
 extern void i386_pe_seh_init (FILE *);
 extern void i386_pe_seh_end_prologue (FILE *);
 extern void i386_pe_seh_unwind_emit (FILE *, rtx);
+extern void i386_pe_seh_emit_except_personality (rtx);
+extern void i386_pe_seh_init_sections (void);
 
 /* In winnt-cxx.c and winnt-stubs.c  */
 extern void i386_pe_adjust_class_at_definition (tree);

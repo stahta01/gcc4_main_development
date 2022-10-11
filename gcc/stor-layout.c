@@ -57,6 +57,7 @@ static int reference_types_internal = 0;
 
 static tree self_referential_size (tree);
 static void finalize_record_size (record_layout_info);
+static void finalize_type_align (tree, unsigned int);
 static void finalize_type_size (tree);
 static void place_union_field (record_layout_info, tree);
 #if defined (PCC_BITFIELD_TYPE_MATTERS) || defined (BITFIELD_NBYTES_LIMITED)
@@ -100,32 +101,6 @@ variable_size (tree size)
 
 /* An array of functions used for self-referential size computation.  */
 static GTY(()) VEC (tree, gc) *size_functions;
-
-/* Look inside EXPR into simple arithmetic operations involving constants.
-   Return the outermost non-arithmetic or non-constant node.  */
-
-static tree
-skip_simple_constant_arithmetic (tree expr)
-{
-  while (true)
-    {
-      if (UNARY_CLASS_P (expr))
-	expr = TREE_OPERAND (expr, 0);
-      else if (BINARY_CLASS_P (expr))
-	{
-	  if (TREE_CONSTANT (TREE_OPERAND (expr, 1)))
-	    expr = TREE_OPERAND (expr, 0);
-	  else if (TREE_CONSTANT (TREE_OPERAND (expr, 0)))
-	    expr = TREE_OPERAND (expr, 1);
-	  else
-	    break;
-	}
-      else
-	break;
-    }
-
-  return expr;
-}
 
 /* Similar to copy_tree_r but do not copy component references involving
    PLACEHOLDER_EXPRs.  These nodes are spotted in find_placeholder_in_expr
@@ -1410,6 +1385,10 @@ place_field (record_layout_info rli, tree field)
   DECL_FIELD_BIT_OFFSET (field) = rli->bitpos;
   SET_DECL_OFFSET_ALIGN (field, rli->offset_align);
 
+  /* Evaluate nonconstant offsets only once, either now or as soon as safe.  */
+  if (TREE_CODE (DECL_FIELD_OFFSET (field)) != INTEGER_CST)
+    DECL_FIELD_OFFSET (field) = variable_size (DECL_FIELD_OFFSET (field));
+
   /* If this field ended up more aligned than we thought it would be (we
      approximate this by seeing if its position changed), lay out the field
      again; perhaps we can use an integral mode for it now.  */
@@ -1493,12 +1472,7 @@ finalize_record_size (record_layout_info rli)
   normalize_rli (rli);
 
   /* Determine the desired alignment.  */
-#ifdef ROUND_TYPE_ALIGN
-  TYPE_ALIGN (rli->t) = ROUND_TYPE_ALIGN (rli->t, TYPE_ALIGN (rli->t),
-					  rli->record_align);
-#else
-  TYPE_ALIGN (rli->t) = MAX (TYPE_ALIGN (rli->t), rli->record_align);
-#endif
+  finalize_type_align (rli->t, rli->record_align);
 
   /* Compute the size so far.  Be sure to allow for extra bits in the
      size in bytes.  We have guaranteed above that it will be no more
@@ -1525,13 +1499,7 @@ finalize_record_size (record_layout_info rli)
     {
       tree unpacked_size;
 
-#ifdef ROUND_TYPE_ALIGN
-      rli->unpacked_align
-	= ROUND_TYPE_ALIGN (rli->t, TYPE_ALIGN (rli->t), rli->unpacked_align);
-#else
-      rli->unpacked_align = MAX (TYPE_ALIGN (rli->t), rli->unpacked_align);
-#endif
-
+      rli->unpacked_align = MAX (rli->unpacked_align, TYPE_ALIGN (rli->t));
       unpacked_size = round_up (TYPE_SIZE (rli->t), rli->unpacked_align);
       if (simple_cst_equal (unpacked_size, TYPE_SIZE (rli->t)))
 	{
@@ -1577,7 +1545,12 @@ compute_record_mode (tree type)
      line.  */
   SET_TYPE_MODE (type, BLKmode);
 
-  if (! host_integerp (TYPE_SIZE (type), 1))
+  /* If the type has variable size, then it needs to have BLKmode.  */
+  if (!host_integerp (TYPE_SIZE (type), 1))
+    return;
+
+  /* Likewise if it has reverse storage order.  */
+  if (TYPE_REVERSE_STORAGE_ORDER (type))
     return;
 
   /* A record which has any BLKmode members must itself be
@@ -1604,13 +1577,10 @@ compute_record_mode (tree type)
       if (simple_cst_equal (TYPE_SIZE (type), DECL_SIZE (field)))
 	mode = DECL_MODE (field);
 
-#ifdef MEMBER_TYPE_FORCES_BLK
-      /* With some targets, eg. c4x, it is sub-optimal
-	 to access an aligned BLKmode structure as a scalar.  */
-
-      if (MEMBER_TYPE_FORCES_BLK (field, mode))
+      /* With some targets, it is sub-optimal to access an aligned
+	 BLKmode structure as a scalar.  */
+      if (targetm.member_type_forces_blk (field, mode))
 	return;
-#endif /* MEMBER_TYPE_FORCES_BLK  */
     }
 
   /* If we only have one real field; use its mode if that mode's size
@@ -1635,6 +1605,20 @@ compute_record_mode (tree type)
       TYPE_NO_FORCE_BLK (type) = 1;
       SET_TYPE_MODE (type, BLKmode);
     }
+}
+
+/* Compute TYPE_ALIGN for TYPE, once it has been laid out.  SPECIFIED is
+   the alignment that was explicitly specified for TYPE.  */
+
+static void
+finalize_type_align (tree type, unsigned int specified)
+{
+#ifdef ROUND_TYPE_ALIGN
+  if (!TYPE_PACKED (type))
+    TYPE_ALIGN (type) = ROUND_TYPE_ALIGN (type, TYPE_ALIGN (type), specified);
+  else
+#endif
+    TYPE_ALIGN (type) = MAX (TYPE_ALIGN (type), specified);
 }
 
 /* Compute TYPE_SIZE and TYPE_ALIGN for TYPE, once it has been laid
@@ -1666,10 +1650,7 @@ finalize_type_size (tree type)
     }
 
   /* Do machine-dependent extra alignment.  */
-#ifdef ROUND_TYPE_ALIGN
-  TYPE_ALIGN (type)
-    = ROUND_TYPE_ALIGN (type, TYPE_ALIGN (type), BITS_PER_UNIT);
-#endif
+  finalize_type_align (type, BITS_PER_UNIT);
 
   /* If we failed to find a simple way to calculate the unit size
      of the type, find it by division.  */
@@ -2211,23 +2192,19 @@ layout_type (tree type)
 
 	/* Now round the alignment and size,
 	   using machine-dependent criteria if any.  */
+	TYPE_ALIGN (type) = TYPE_ALIGN (element);
+	finalize_type_align (type, BITS_PER_UNIT);
 
-#ifdef ROUND_TYPE_ALIGN
-	TYPE_ALIGN (type)
-	  = ROUND_TYPE_ALIGN (type, TYPE_ALIGN (element), BITS_PER_UNIT);
-#else
-	TYPE_ALIGN (type) = MAX (TYPE_ALIGN (element), BITS_PER_UNIT);
-#endif
 	TYPE_USER_ALIGN (type) = TYPE_USER_ALIGN (element);
 	SET_TYPE_MODE (type, BLKmode);
 	if (TYPE_SIZE (type) != 0
-#ifdef MEMBER_TYPE_FORCES_BLK
-	    && ! MEMBER_TYPE_FORCES_BLK (type, VOIDmode)
-#endif
+	    && ! targetm.member_type_forces_blk (type, VOIDmode)
 	    /* BLKmode elements force BLKmode aggregate;
 	       else extract/store fields may lose.  */
 	    && (TYPE_MODE (TREE_TYPE (type)) != BLKmode
-		|| TYPE_NO_FORCE_BLK (TREE_TYPE (type))))
+		|| TYPE_NO_FORCE_BLK (TREE_TYPE (type)))
+	    /* Likewise if it has reverse storage order.  */
+	    && !TYPE_REVERSE_STORAGE_ORDER (type))
 	  {
 	    SET_TYPE_MODE (type, mode_for_array (TREE_TYPE (type),
 						 TYPE_SIZE (type)));
@@ -2533,10 +2510,14 @@ set_min_and_max_values_for_integral_type (tree type,
 	= build_int_cst_wide (type,
 			      (precision - HOST_BITS_PER_WIDE_INT > 0
 			       ? -1
-			       : ((HOST_WIDE_INT) 1 << (precision - 1)) - 1),
+			       : (HOST_WIDE_INT)
+				 (((unsigned HOST_WIDE_INT) 1
+				   << (precision - 1)) - 1)),
 			      (precision - HOST_BITS_PER_WIDE_INT - 1 > 0
-			       ? (((HOST_WIDE_INT) 1
-				   << (precision - HOST_BITS_PER_WIDE_INT - 1))) - 1
+			       ? (HOST_WIDE_INT)
+				 ((((unsigned HOST_WIDE_INT) 1
+				    << (precision - HOST_BITS_PER_WIDE_INT
+					- 1))) - 1)
 			       : 0));
     }
 

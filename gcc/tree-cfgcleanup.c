@@ -92,40 +92,11 @@ cleanup_control_expr_graph (basic_block bb, gimple_stmt_iterator gsi)
       switch (gimple_code (stmt))
 	{
 	case GIMPLE_COND:
-	  {
-	    tree lhs = gimple_cond_lhs (stmt);
-	    tree rhs = gimple_cond_rhs (stmt);
-	    /* For conditions try harder and lookup single-argument
-	       PHI nodes.  Only do so from the same basic-block though
-	       as other basic-blocks may be dead already.  */
-	    if (TREE_CODE (lhs) == SSA_NAME
-		&& !name_registered_for_update_p (lhs))
-	      {
-		gimple def_stmt = SSA_NAME_DEF_STMT (lhs);
-		if (gimple_code (def_stmt) == GIMPLE_PHI
-		    && gimple_phi_num_args (def_stmt) == 1
-		    && gimple_bb (def_stmt) == gimple_bb (stmt)
-		    && (TREE_CODE (PHI_ARG_DEF (def_stmt, 0)) != SSA_NAME
-			|| !name_registered_for_update_p (PHI_ARG_DEF (def_stmt,
-								       0))))
-		  lhs = PHI_ARG_DEF (def_stmt, 0);
-	      }
-	    if (TREE_CODE (rhs) == SSA_NAME
-		&& !name_registered_for_update_p (rhs))
-	      {
-		gimple def_stmt = SSA_NAME_DEF_STMT (rhs);
-		if (gimple_code (def_stmt) == GIMPLE_PHI
-		    && gimple_phi_num_args (def_stmt) == 1
-		    && gimple_bb (def_stmt) == gimple_bb (stmt)
-		    && (TREE_CODE (PHI_ARG_DEF (def_stmt, 0)) != SSA_NAME
-			|| !name_registered_for_update_p (PHI_ARG_DEF (def_stmt,
-								       0))))
-		  rhs = PHI_ARG_DEF (def_stmt, 0);
-	      }
-	    val = fold_binary_loc (loc, gimple_cond_code (stmt),
-				   boolean_type_node, lhs, rhs);
-	    break;
-	  }
+	  val = fold_binary_loc (loc, gimple_cond_code (stmt),
+				 boolean_type_node,
+			         gimple_cond_lhs (stmt),
+				 gimple_cond_rhs (stmt));
+	  break;
 
 	case GIMPLE_SWITCH:
 	  val = gimple_switch_index (stmt);
@@ -290,8 +261,8 @@ tree_forwarder_block_p (basic_block bb, bool phi_wanted)
       if (e->src == ENTRY_BLOCK_PTR || (e->flags & EDGE_EH))
 	return false;
       /* If goto_locus of any of the edges differs, prevent removing
-	 the forwarder block for -O0.  */
-      else if (optimize == 0 && e->goto_locus != locus)
+	 the forwarder block when not optimizing CFG.  */
+      else if (!optimize_cfg && e->goto_locus != locus)
 	return false;
   }
 
@@ -306,7 +277,7 @@ tree_forwarder_block_p (basic_block bb, bool phi_wanted)
 	case GIMPLE_LABEL:
 	  if (DECL_NONLOCAL (gimple_label_label (stmt)))
 	    return false;
-	  if (optimize == 0 && gimple_location (stmt) != locus)
+	  if (!optimize_cfg && gimple_location (stmt) != locus)
 	    return false;
 	  break;
 
@@ -368,6 +339,7 @@ remove_forwarder_block (basic_block bb)
 {
   edge succ = single_succ_edge (bb), e, s;
   basic_block dest = succ->dest;
+  int flags = succ->flags;
   gimple label;
   edge_iterator ei;
   gimple_stmt_iterator gsi, gsi_to;
@@ -449,6 +421,8 @@ remove_forwarder_block (basic_block bb)
 	      add_phi_arg (phi, gimple_phi_arg_def (phi, succ->dest_idx), s, l);
 	    }
 	}
+
+      s->flags = (s->flags & ~EDGE_LOOP_HINTS) | (flags & EDGE_LOOP_HINTS);
     }
 
   /* Move nonlocal labels and computed goto targets as well as user

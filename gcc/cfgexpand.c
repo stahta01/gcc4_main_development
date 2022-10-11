@@ -1118,6 +1118,10 @@ expand_one_error_var (tree var)
 static bool
 defer_stack_allocation (tree var, bool toplevel)
 {
+  /* Whether the variable is small enough for immediate allocation not
+     to be a problem wrt frame growth.  */
+  bool smallish = tree_low_cst (DECL_SIZE_UNIT (var), 1) < 32;
+
   /* If stack protection is enabled, *all* stack variables must be deferred,
      so that we can re-order the strings to the top of the frame.  */
   if (flag_stack_protect)
@@ -1126,6 +1130,13 @@ defer_stack_allocation (tree var, bool toplevel)
   /* We handle "large" alignment via dynamic allocation.  We want to handle
      this extra complication in only one place, so defer them.  */
   if (DECL_ALIGN (var) > MAX_SUPPORTED_STACK_ALIGNMENT)
+    return true;
+
+  /* When optimizing, DECL_IGNORED variables originally scoped might be
+     detached from their block and appear at toplevel when we reach here.
+     We  want to try-coalesce them with variables from other blocks when
+     the immediate contribution to the frame size would be noticeable.  */
+  if (optimize && toplevel && DECL_IGNORED_P (var) && !smallish)
     return true;
 
   /* Variables in the outermost scope automatically conflict with
@@ -1141,7 +1152,7 @@ defer_stack_allocation (tree var, bool toplevel)
      other hand, we don't want the function's stack frame size to
      get completely out of hand.  So we avoid adding scalars and
      "small" aggregates to the list at all.  */
-  if (optimize == 0 && tree_low_cst (DECL_SIZE_UNIT (var), 1) < 32)
+  if (optimize == 0 && smallish)
     return false;
 
   return true;
@@ -1534,9 +1545,16 @@ expand_used_vars (void)
       tree var = partition_to_var (SA.map, i);
 
       gcc_assert (is_gimple_reg (var));
+
+      /* Always allocate space for partitions based on VAR_DECLs.  But for
+	 those based on PARM_DECLs or RESULT_DECLs and which matter for the
+	 debug info, there is no need to do so if optimization is disabled
+	 because all the SSA_NAMEs based on these DECLs have been coalesced
+	 into a single partition, which is thus assigned the canonical RTL
+	 location of the DECLs.  */
       if (TREE_CODE (SSA_NAME_VAR (var)) == VAR_DECL)
 	expand_one_var (var, true, true);
-      else
+      else if (DECL_IGNORED_P (SSA_NAME_VAR (var)) || optimize)
 	{
 	  /* This is a PARM_DECL or RESULT_DECL.  For those partitions that
 	     contain the default def (representing the parm or result itself)
@@ -1573,9 +1591,11 @@ expand_used_vars (void)
       else if (TREE_STATIC (var) || DECL_EXTERNAL (var))
 	expand_now = true;
 
-      /* If the variable is not associated with any block, then it
-	 was created by the optimizers, and could be live anywhere
-	 in the function.  */
+      /* Expand variables not associated with any block now.  Those created by
+         the optimizers could be live anywhere in the function.  Those that
+         could possibly have been scoped originally and detached from their
+         block will have their allocation deferred so we try-coalesce them with
+         others when optimizing.  */
       else if (TREE_USED (var))
 	expand_now = true;
 
@@ -1822,10 +1842,13 @@ expand_gimple_cond (basic_block bb, gimple stmt)
   rtx last2, last;
   enum tree_code code;
   tree op0, op1;
+  location_t loc;
 
   code = gimple_cond_code (stmt);
   op0 = gimple_cond_lhs (stmt);
   op1 = gimple_cond_rhs (stmt);
+  loc = gimple_location (stmt);
+
   /* We're sometimes presented with such code:
        D.123_1 = x < y;
        if (D.123_1 != 0)
@@ -1875,7 +1898,7 @@ expand_gimple_cond (basic_block bb, gimple stmt)
   last2 = last = get_last_insn ();
 
   extract_true_false_edges_from_block (bb, &true_edge, &false_edge);
-  set_curr_insn_source_location (gimple_location (stmt));
+  set_curr_insn_source_location (loc);
   set_curr_insn_block (gimple_block (stmt));
 
   /* These flags have no purpose in RTL land.  */
@@ -1887,7 +1910,7 @@ expand_gimple_cond (basic_block bb, gimple stmt)
   if (false_edge->dest == bb->next_bb)
     {
       jumpif_1 (code, op0, op1, label_rtx_for_bb (true_edge->dest),
-		true_edge->probability);
+		true_edge->probability, loc);
       maybe_dump_rtl_for_gimple_stmt (stmt, last);
       if (true_edge->goto_locus)
 	{
@@ -1903,7 +1926,7 @@ expand_gimple_cond (basic_block bb, gimple stmt)
   if (true_edge->dest == bb->next_bb)
     {
       jumpifnot_1 (code, op0, op1, label_rtx_for_bb (false_edge->dest),
-		   false_edge->probability);
+		   false_edge->probability, loc);
       maybe_dump_rtl_for_gimple_stmt (stmt, last);
       if (false_edge->goto_locus)
 	{
@@ -1918,7 +1941,7 @@ expand_gimple_cond (basic_block bb, gimple stmt)
     }
 
   jumpif_1 (code, op0, op1, label_rtx_for_bb (true_edge->dest),
-	    true_edge->probability);
+	    true_edge->probability, loc);
   last = get_last_insn ();
   if (false_edge->goto_locus)
     {
@@ -2054,6 +2077,7 @@ expand_call_stmt (gimple stmt)
   else
     CALL_FROM_THUNK_P (exp) = gimple_call_from_thunk_p (stmt);
   CALL_EXPR_VA_ARG_PACK (exp) = gimple_call_va_arg_pack_p (stmt);
+  CALL_EXPR_BY_DESCRIPTOR (exp) = gimple_call_by_descriptor_p (stmt);
   SET_EXPR_LOCATION (exp, gimple_location (stmt));
   TREE_BLOCK (exp) = gimple_block (stmt);
 
@@ -2912,9 +2936,10 @@ expand_debug_expr (tree exp)
 	enum machine_mode mode1;
 	HOST_WIDE_INT bitsize, bitpos;
 	tree offset;
-	int volatilep = 0;
-	tree tem = get_inner_reference (exp, &bitsize, &bitpos, &offset,
-					&mode1, &unsignedp, &volatilep, false);
+	int reversep, volatilep = 0;
+	tree tem
+	  = get_inner_reference (exp, &bitsize, &bitpos, &offset, &mode1,
+				 &unsignedp, &reversep, &volatilep, false);
 	rtx orig_op0;
 
 	if (bitsize == 0)
@@ -3334,9 +3359,10 @@ expand_debug_expr (tree exp)
 	  if (handled_component_p (TREE_OPERAND (exp, 0)))
 	    {
 	      HOST_WIDE_INT bitoffset, bitsize, maxsize;
+	      bool reverse;
 	      tree decl
-		= get_ref_base_and_extent (TREE_OPERAND (exp, 0),
-					   &bitoffset, &bitsize, &maxsize);
+		= get_ref_base_and_extent (TREE_OPERAND (exp, 0), &bitoffset,
+					   &bitsize, &maxsize, &reverse);
 	      if ((TREE_CODE (decl) == VAR_DECL
 		   || TREE_CODE (decl) == PARM_DECL
 		   || TREE_CODE (decl) == RESULT_DECL)
@@ -3755,6 +3781,7 @@ expand_gimple_basic_block (basic_block bb)
   gimple_stmt_iterator gsi;
   gimple_seq stmts;
   gimple stmt = NULL;
+  bool label_at_start = false;
   rtx note, last;
   edge e;
   edge_iterator ei;
@@ -3797,7 +3824,9 @@ expand_gimple_basic_block (basic_block bb)
   if (!gsi_end_p (gsi))
     {
       stmt = gsi_stmt (gsi);
-      if (gimple_code (stmt) != GIMPLE_LABEL)
+      if (gimple_code (stmt) == GIMPLE_LABEL)
+	label_at_start = true;
+      else
 	stmt = NULL;
     }
 
@@ -4072,6 +4101,21 @@ expand_gimple_basic_block (basic_block bb)
 				       SSA_NAME_VERSION (DEF_FROM_PTR (def_p))))
 		    continue;
 		}
+
+	      /* If a return doesn't have a location and is the first statement
+		 after a label in the basic block, it might represent multiple
+		 user returns so we cannot let it inherit the location of the
+		 last statement of the previous basic block in RTL.  */
+	      if (gimple_code (stmt) == GIMPLE_RETURN
+		  && !gimple_has_location (stmt)
+		  && label_at_start
+		  && gsi.ptr == gimple_seq_first (stmts)->next)
+		{
+		  gimple_set_location (stmt, cfun->function_end_locus);
+		  gimple_set_block (stmt,
+				    DECL_INITIAL (current_function_decl));
+		}
+
 	      last = expand_gimple_stmt (stmt);
 	      maybe_dump_rtl_for_gimple_stmt (stmt, last);
 	    }
@@ -4610,31 +4654,20 @@ gimple_expand_cfg (void)
      split edges which edge insertions might do.  */
   rebuild_jump_labels (get_insns ());
 
-  FOR_BB_BETWEEN (bb, ENTRY_BLOCK_PTR, EXIT_BLOCK_PTR, next_bb)
+  /* Avoid putting insns before parm_birth_insn.  */
+  if (parm_birth_insn && single_succ_p (ENTRY_BLOCK_PTR))
     {
-      edge e;
-      edge_iterator ei;
-      for (ei = ei_start (bb->succs); (e = ei_safe_edge (ei)); )
+      edge e = single_succ_edge (ENTRY_BLOCK_PTR);
+      if (e->insns.r)
 	{
-	  if (e->insns.r)
-	    {
-	      rebuild_jump_labels_chain (e->insns.r);
-	      /* Avoid putting insns before parm_birth_insn.  */
-	      if (e->src == ENTRY_BLOCK_PTR
-		  && single_succ_p (ENTRY_BLOCK_PTR)
-		  && parm_birth_insn)
-		{
-		  rtx insns = e->insns.r;
-		  e->insns.r = NULL_RTX;
-		  emit_insn_after_noloc (insns, parm_birth_insn, e->dest);
-		}
-	      else
-		commit_one_edge_insertion (e);
-	    }
-	  else
-	    ei_next (&ei);
+	  rtx insns = e->insns.r;
+	  e->insns.r = NULL_RTX;
+	  rebuild_jump_labels_chain (insns);
+	  emit_insn_after_noloc (insns, parm_birth_insn, e->dest);
 	}
     }
+
+  commit_edge_insertions ();
 
   /* We're done expanding trees to RTL.  */
   currently_expanding_to_rtl = 0;

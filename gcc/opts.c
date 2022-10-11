@@ -438,7 +438,6 @@ static const struct default_options default_options_table[] =
     { OPT_LEVELS_1_PLUS, OPT_fsplit_wide_types, NULL, 1 },
     { OPT_LEVELS_1_PLUS, OPT_ftree_ccp, NULL, 1 },
     { OPT_LEVELS_1_PLUS, OPT_ftree_bit_ccp, NULL, 1 },
-    { OPT_LEVELS_1_PLUS, OPT_ftree_dce, NULL, 1 },
     { OPT_LEVELS_1_PLUS, OPT_ftree_dominator_opts, NULL, 1 },
     { OPT_LEVELS_1_PLUS, OPT_ftree_dse, NULL, 1 },
     { OPT_LEVELS_1_PLUS, OPT_ftree_ter, NULL, 1 },
@@ -715,7 +714,7 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
 
   if (opts->x_flag_exceptions
       && opts->x_flag_reorder_blocks_and_partition
-      && (ui_except == UI_SJLJ || ui_except == UI_TARGET))
+      && (ui_except == UI_SJLJ || ui_except >= UI_TARGET))
     {
       inform (loc,
 	      "-freorder-blocks-and-partition does not work "
@@ -730,7 +729,7 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
   if (opts->x_flag_unwind_tables
       && !targetm_common.unwind_tables_default
       && opts->x_flag_reorder_blocks_and_partition
-      && (ui_except == UI_SJLJ || ui_except == UI_TARGET))
+      && (ui_except == UI_SJLJ || ui_except >= UI_TARGET))
     {
       inform (loc,
 	      "-freorder-blocks-and-partition does not support "
@@ -747,7 +746,7 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
       && (!targetm_common.have_named_sections
 	  || (opts->x_flag_unwind_tables
 	      && targetm_common.unwind_tables_default
-	      && (ui_except == UI_SJLJ || ui_except == UI_TARGET))))
+	      && (ui_except == UI_SJLJ || ui_except >= UI_TARGET))))
     {
       inform (loc,
 	      "-freorder-blocks-and-partition does not work "
@@ -841,6 +840,27 @@ finish_options (struct gcc_options *opts, struct gcc_options *opts_set,
   /* This replaces set_Wextra.  */
   if (opts->x_warn_uninitialized == -1)
     opts->x_warn_uninitialized = opts->x_extra_warnings;
+
+  /* Disable control-flow altering passes when requested to do so.  */
+  if (opts->x_flag_preserve_control_flow)
+    {
+      /* -fpreserve-control-flow is supposed to be orthogonal to the
+	 optimization level.  However it is untested at -O2 or above.  */
+      if (opts->x_optimize > 1)
+	{
+	  inform (input_location,
+		  "-fpreserve-control-flow is not supported at -O2 or above");
+	  opts->x_flag_preserve_control_flow = 0;
+	}
+      else
+	{
+	  opts->x_flag_if_conversion = 0;
+	  opts->x_flag_if_conversion2 = 0;
+	  opts->x_flag_shrink_wrap = 0;
+	  opts->x_flag_tree_ch = 0;
+	  opts->x_flag_tree_dom = 0;
+	}
+    }
 }
 
 #define LEFT_COLUMN	27
@@ -1494,6 +1514,32 @@ common_handle_option (struct gcc_options *opts,
 
     case OPT_fdebug_prefix_map_:
       /* Deferred.  */
+      break;
+
+    case OPT_fcallgraph_info:
+      opts->x_flag_callgraph_info = CALLGRAPH_INFO_NAKED;
+      break;
+
+    case OPT_fcallgraph_info_:
+      {
+	char *my_arg, *p;
+	my_arg = xstrdup (arg);
+	p = strtok (my_arg, ",");
+	while (p)
+	  {
+	    if (strcmp (p, "su") == 0)
+	      {
+		opts->x_flag_callgraph_info |= CALLGRAPH_INFO_STACK_USAGE;
+		opts->x_flag_stack_usage_info = true;
+	      }
+	    else if (strcmp (p, "da") == 0)
+	      opts->x_flag_callgraph_info |= CALLGRAPH_INFO_DYNAMIC_ALLOC;
+	    else
+	      return 0;
+	    p = strtok (NULL, ",");
+	  }
+	free (my_arg);
+      }
       break;
 
     case OPT_fdiagnostics_show_location_:

@@ -534,13 +534,13 @@ delete_basic_block (basic_block bb)
 basic_block
 split_edge (edge e)
 {
+  basic_block src = e->src, dest = e->dest;
   basic_block ret;
   gcov_type count = e->count;
-  int freq = EDGE_FREQUENCY (e);
-  edge f;
-  bool irr = (e->flags & EDGE_IRREDUCIBLE_LOOP) != 0;
+  const int freq = EDGE_FREQUENCY (e);
+  const int flags = e->flags;
   struct loop *loop;
-  basic_block src = e->src, dest = e->dest;
+  edge succ;
 
   if (!cfg_hooks->split_edge)
     internal_error ("%s does not support split_edge", cfg_hooks->name);
@@ -551,15 +551,19 @@ split_edge (edge e)
   ret = cfg_hooks->split_edge (e);
   ret->count = count;
   ret->frequency = freq;
-  single_succ_edge (ret)->probability = REG_BR_PROB_BASE;
-  single_succ_edge (ret)->count = count;
 
-  if (irr)
+  succ = single_succ_edge (ret);
+  succ->probability = REG_BR_PROB_BASE;
+  succ->count = count;
+
+  if (flags & EDGE_IRREDUCIBLE_LOOP)
     {
       ret->flags |= BB_IRREDUCIBLE_LOOP;
+      succ->flags |= EDGE_IRREDUCIBLE_LOOP;
       single_pred_edge (ret)->flags |= EDGE_IRREDUCIBLE_LOOP;
-      single_succ_edge (ret)->flags |= EDGE_IRREDUCIBLE_LOOP;
     }
+
+  succ->flags = (succ->flags & ~EDGE_LOOP_HINTS) | (flags & EDGE_LOOP_HINTS);
 
   if (dom_info_available_p (CDI_DOMINATORS))
     set_immediate_dominator (CDI_DOMINATORS, ret, single_pred (ret));
@@ -579,9 +583,10 @@ split_edge (edge e)
 	  == single_pred (ret))
 	{
 	  edge_iterator ei;
+	  edge f;
 	  FOR_EACH_EDGE (f, ei, single_succ (ret)->preds)
 	    {
-	      if (f == single_succ_edge (ret))
+	      if (f == succ)
 		continue;
 
 	      if (!dominated_by_p (CDI_DOMINATORS, f->src,
@@ -702,6 +707,11 @@ merge_blocks (basic_block a, basic_block b)
     }
   a->succs = b->succs;
   a->flags |= b->flags;
+
+  /* If we're guessing the profile, adjust the frequency to the larger one.
+     This will conservatively avoid to make blocks unduly cold.  */
+  if (profile_status == PROFILE_GUESSED && a->frequency < b->frequency)
+    a->frequency = b->frequency;
 
   /* B hasn't quite yet ceased to exist.  Attempt to prevent mishap.  */
   b->preds = b->succs = NULL;

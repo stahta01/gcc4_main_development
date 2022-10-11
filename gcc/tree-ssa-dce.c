@@ -271,9 +271,13 @@ mark_operand_necessary (tree op)
 static void
 mark_stmt_if_obviously_necessary (gimple stmt, bool aggressive)
 {
+  tree lhs = NULL_TREE;
+
   /* With non-call exceptions, we have to assume that all statements could
-     throw.  If a statement may throw, it is inherently necessary.  */
-  if (cfun->can_throw_non_call_exceptions && stmt_could_throw_p (stmt))
+     throw.  If a statement could throw, it can be deemed necessary.  */
+  if (cfun->can_throw_non_call_exceptions
+      && !cfun->can_delete_dead_exceptions
+      && stmt_could_throw_p (stmt))
     {
       mark_stmt_necessary (stmt, true);
       return;
@@ -301,17 +305,18 @@ mark_stmt_if_obviously_necessary (gimple stmt, bool aggressive)
     case GIMPLE_CALL:
       {
 	tree callee = gimple_call_fndecl (stmt);
-	if (callee != NULL_TREE
-	    && DECL_BUILT_IN_CLASS (callee) == BUILT_IN_NORMAL)
+	if (callee && DECL_BUILT_IN_CLASS (callee) == BUILT_IN_NORMAL)
 	  switch (DECL_FUNCTION_CODE (callee))
 	    {
 	    case BUILT_IN_MALLOC:
 	    case BUILT_IN_CALLOC:
 	    case BUILT_IN_ALLOCA:
 	    case BUILT_IN_ALLOCA_WITH_ALIGN:
-	      return;
-
-	    default:;
+	      if (optimize)
+		return;
+	      /* Fall through.  */
+	    default:
+	      break;
 	    }
 	/* Most, but not all function calls are required.  Function calls that
 	   produce no result and have no side effects (i.e. const pure
@@ -321,7 +326,8 @@ mark_stmt_if_obviously_necessary (gimple stmt, bool aggressive)
 	    mark_stmt_necessary (stmt, true);
 	    return;
 	  }
-	if (!gimple_call_lhs (stmt))
+	lhs = gimple_call_lhs (stmt);
+	if (!lhs)
 	  return;
 	break;
       }
@@ -352,7 +358,8 @@ mark_stmt_if_obviously_necessary (gimple stmt, bool aggressive)
       break;
 
     case GIMPLE_ASSIGN:
-      if (TREE_CODE (gimple_assign_lhs (stmt)) == SSA_NAME
+      lhs = gimple_assign_lhs (stmt);
+      if (TREE_CODE (lhs) == SSA_NAME
 	  && TREE_CLOBBER_P (gimple_assign_rhs1 (stmt)))
 	return;
       break;
@@ -361,22 +368,34 @@ mark_stmt_if_obviously_necessary (gimple stmt, bool aggressive)
       break;
     }
 
-  /* If the statement has volatile operands, it needs to be preserved.
-     Same for statements that can alter control flow in unpredictable
-     ways.  */
+  /* If the statement has volatile operands, it needs to be preserved.  Same
+     for statements that can alter control flow in unpredictable ways.  */
   if (gimple_has_volatile_ops (stmt) || is_ctrl_altering_stmt (stmt))
     {
       mark_stmt_necessary (stmt, true);
       return;
     }
 
-  if (is_hidden_global_store (stmt))
+  /* If the statement writes to global memory, or just writes to memory if not
+     optimizing, it needs to be preserved.  */
+  if (optimize
+      ? is_hidden_global_store (stmt)
+      : gimple_vdef (stmt) != NULL_TREE)
     {
       mark_stmt_necessary (stmt, true);
       return;
     }
 
-  return;
+  /* If not optimizing, assignments to user variables need to be preserved.  */
+  if (!optimize
+      && lhs
+      && TREE_CODE (lhs) == SSA_NAME
+      && SSA_NAME_VAR (lhs)
+      && !DECL_IGNORED_P (SSA_NAME_VAR (lhs)))
+    {
+      mark_stmt_necessary (stmt, true);
+      return;
+    }
 }
 
 
@@ -555,8 +574,10 @@ mark_aliased_reaching_defs_necessary_1 (ao_ref *ref, tree vdef, void *data)
     {
       tree base, lhs = gimple_get_lhs (def_stmt);
       HOST_WIDE_INT size, offset, max_size;
+      bool reverse;
       ao_ref_base (ref);
-      base = get_ref_base_and_extent (lhs, &offset, &size, &max_size);
+      base
+	= get_ref_base_and_extent (lhs, &offset, &size, &max_size, &reverse);
       /* We can get MEM[symbol: sZ, index: D.8862_1] here,
 	 so base == refd->base does not always hold.  */
       if (base == ref->base)
@@ -1292,6 +1313,9 @@ eliminate_unnecessary_stmts (void)
 
   while (VEC_length (basic_block, h))
     {
+      location_t last_location = UNKNOWN_LOCATION;
+      tree last_block = NULL_TREE;
+
       bb = VEC_pop (basic_block, h);
 
       /* Remove dead statements.  */
@@ -1331,7 +1355,15 @@ eliminate_unnecessary_stmts (void)
 	  if (!gimple_plf (stmt, STMT_NECESSARY))
 	    {
 	      if (!is_gimple_debug (stmt))
-		something_changed = true;
+		{
+		  if (last_location == UNKNOWN_LOCATION)
+		    {
+		      last_location = gimple_location (stmt);
+		      last_block = gimple_block (stmt);
+		    }
+
+		  something_changed = true;
+		}
 	      remove_dead_stmt (&gsi, bb);
 	    }
 	  else if (is_gimple_call (stmt))
@@ -1345,6 +1377,10 @@ eliminate_unnecessary_stmts (void)
 	      if (name
 		  && TREE_CODE (name) == SSA_NAME
 		  && !TEST_BIT (processed, SSA_NAME_VERSION (name))
+		  /* Avoid doing so for user variables if not optimizing.  */
+		  && (optimize
+		      || !SSA_NAME_VAR (name)
+		      || DECL_IGNORED_P (SSA_NAME_VAR (name)))
 		  /* Avoid doing so for allocation calls which we
 		     did not mark as necessary, it will confuse the
 		     special logic we apply to malloc/free pair removal.  */
@@ -1369,6 +1405,29 @@ eliminate_unnecessary_stmts (void)
 		  update_stmt (stmt);
 		  release_ssa_name (name);
 		}
+	    }
+	}
+
+      /* If we are preserving the control flow and there is no more real insns
+	 in the block, put the last recorded location onto the fallthru edge
+	 to preserve it as well as the debug insns the block may contain.  */
+      if (flag_preserve_control_flow
+	  && something_changed
+	  && !last_stmt (bb)
+	  && last_location != UNKNOWN_LOCATION
+	  && last_block != NULL_TREE)
+	{
+	  edge e;
+	  edge_iterator ei;
+
+	  FOR_EACH_EDGE (e, ei, bb->succs)
+	    if (e->flags & EDGE_FALLTHRU)
+	      break;
+
+	  if (e->goto_locus == UNKNOWN_LOCATION)
+	    {
+	      e->goto_locus = last_location;
+	      e->goto_block = last_block;
 	    }
 	}
     }
@@ -1648,12 +1707,37 @@ gate_dce (void)
   return flag_tree_dce != 0;
 }
 
+static bool
+gate_no_optimization (void)
+{
+  return optimize == 0 && flag_tree_dce != 0;
+}
+
 struct gimple_opt_pass pass_dce =
 {
  {
   GIMPLE_PASS,
   "dce",				/* name */
   gate_dce,				/* gate */
+  tree_ssa_dce,				/* execute */
+  NULL,					/* sub */
+  NULL,					/* next */
+  0,					/* static_pass_number */
+  TV_TREE_DCE,				/* tv_id */
+  PROP_cfg | PROP_ssa,			/* properties_required */
+  0,					/* properties_provided */
+  0,					/* properties_destroyed */
+  0,					/* todo_flags_start */
+  TODO_verify_ssa	                /* todo_flags_finish */
+ }
+};
+
+struct gimple_opt_pass pass_dce_O0 =
+{
+ {
+  GIMPLE_PASS,
+  "dce0",				/* name */
+  gate_no_optimization,			/* gate */
   tree_ssa_dce,				/* execute */
   NULL,					/* sub */
   NULL,					/* next */

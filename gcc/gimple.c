@@ -380,6 +380,7 @@ gimple_build_call_from_tree (tree t)
     gimple_call_set_from_thunk (call, CALL_FROM_THUNK_P (t));
   gimple_call_set_va_arg_pack (call, CALL_EXPR_VA_ARG_PACK (t));
   gimple_call_set_nothrow (call, TREE_NOTHROW (t));
+  gimple_call_set_by_descriptor (call, CALL_EXPR_BY_DESCRIPTOR (t));
   gimple_set_no_warning (call, TREE_NO_WARNING (t));
 
   return call;
@@ -1970,6 +1971,9 @@ gimple_call_flags (const_gimple stmt)
   if (stmt->gsbase.subcode & GF_CALL_NOTHROW)
     flags |= ECF_NOTHROW;
 
+  if (stmt->gsbase.subcode & GF_CALL_BY_DESCRIPTOR)
+    flags |= ECF_BY_DESCRIPTOR;
+
   return flags;
 }
 
@@ -3046,57 +3050,6 @@ get_base_address (tree t)
     return NULL_TREE;
 }
 
-void
-recalculate_side_effects (tree t)
-{
-  enum tree_code code = TREE_CODE (t);
-  int len = TREE_OPERAND_LENGTH (t);
-  int i;
-
-  switch (TREE_CODE_CLASS (code))
-    {
-    case tcc_expression:
-      switch (code)
-	{
-	case INIT_EXPR:
-	case MODIFY_EXPR:
-	case VA_ARG_EXPR:
-	case PREDECREMENT_EXPR:
-	case PREINCREMENT_EXPR:
-	case POSTDECREMENT_EXPR:
-	case POSTINCREMENT_EXPR:
-	  /* All of these have side-effects, no matter what their
-	     operands are.  */
-	  return;
-
-	default:
-	  break;
-	}
-      /* Fall through.  */
-
-    case tcc_comparison:  /* a comparison expression */
-    case tcc_unary:       /* a unary arithmetic expression */
-    case tcc_binary:      /* a binary arithmetic expression */
-    case tcc_reference:   /* a reference */
-    case tcc_vl_exp:        /* a function call */
-      TREE_SIDE_EFFECTS (t) = TREE_THIS_VOLATILE (t);
-      for (i = 0; i < len; ++i)
-	{
-	  tree op = TREE_OPERAND (t, i);
-	  if (op && TREE_SIDE_EFFECTS (op))
-	    TREE_SIDE_EFFECTS (t) = 1;
-	}
-      break;
-
-    case tcc_constant:
-      /* No side-effects.  */
-      return;
-
-    default:
-      gcc_unreachable ();
-   }
-}
-
 /* Canonicalize a tree T for use in a COND_EXPR as conditional.  Returns
    a canonicalized tree that is valid for a COND_EXPR or NULL_TREE, if
    we failed to create one.  */
@@ -3564,6 +3517,7 @@ gimple_types_compatible_p_1 (tree t1, tree t2, type_pair_t p,
       if (!gtc_visit (TREE_TYPE (t1), TREE_TYPE (t2),
 		      state, sccstack, sccstate, sccstate_obstack)
 	  || TYPE_STRING_FLAG (t1) != TYPE_STRING_FLAG (t2)
+	  || TYPE_REVERSE_STORAGE_ORDER (t1) != TYPE_REVERSE_STORAGE_ORDER (t2)
 	  || TYPE_NONALIASED_COMPONENT (t1) != TYPE_NONALIASED_COMPONENT (t2))
 	goto different_types;
       else
@@ -3746,6 +3700,9 @@ gimple_types_compatible_p_1 (tree t1, tree t2, type_pair_t p,
     case QUAL_UNION_TYPE:
       {
 	tree f1, f2;
+
+	if (TYPE_REVERSE_STORAGE_ORDER (t1) != TYPE_REVERSE_STORAGE_ORDER (t2))
+	  goto different_types;
 
 	/* For aggregate types, all the fields must be the same.  */
 	for (f1 = TYPE_FIELDS (t1), f2 = TYPE_FIELDS (t2);
@@ -5411,11 +5368,16 @@ gimple_ior_addresses_taken_1 (gimple stmt ATTRIBUTE_UNUSED,
 			      tree addr, void *data)
 {
   bitmap addresses_taken = (bitmap)data;
-  addr = get_base_address (addr);
-  if (addr
-      && DECL_P (addr))
+  tree base = get_base_address (addr);
+  if (base && DECL_P (base))
     {
-      bitmap_set_bit (addresses_taken, DECL_UID (addr));
+      /* Require the address of the whole object to be taken for non-local
+	 frame structures.  */
+      if (TREE_CODE (base) == VAR_DECL
+	  && DECL_NONLOCAL_FRAME (base)
+	  && base != addr)
+	return false;
+      bitmap_set_bit (addresses_taken, DECL_UID (base));
       return true;
     }
   return false;

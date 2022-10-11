@@ -20,7 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 /* Affine combination of trees.  We keep track of at most MAX_AFF_ELTS elements
    to make things simpler; this is sufficient in most cases.  */
 
-#define MAX_AFF_ELTS 8
+#define MAX_AFF_ELTS 12
 
 /* Element of an affine combination.  */
 
@@ -59,6 +59,7 @@ typedef struct affine_tree_combination
 } aff_tree;
 
 double_int double_int_ext_for_comb (double_int, aff_tree *);
+void aff_combination_zero (aff_tree *, tree);
 void aff_combination_const (aff_tree *, tree, double_int);
 void aff_combination_elt (aff_tree *, tree, tree);
 void aff_combination_scale (aff_tree *, double_int);

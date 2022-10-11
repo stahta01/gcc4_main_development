@@ -54,6 +54,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "pointer-set.h"
 #include "splay-tree.h"
 #include "plugin.h"
+#include "c-family/c-xref.h"
 
 /* Possible cases of bad specifiers type used by bad_specifiers. */
 enum bad_spec_place {
@@ -1669,6 +1670,13 @@ duplicate_decls (tree newdecl, tree olddecl, bool newdecl_is_friend)
 
   if (!validate_constexpr_redeclaration (olddecl, newdecl))
     return error_mark_node;
+
+  /* Generate reference to original prototype */
+  generate_reference (olddecl, DECL_SOURCE_LOCATION (olddecl), '\0');
+
+  /* Generate special source reference to the duplicated declaration.  */
+  if (DECL_INITIAL (newdecl) == 0)
+    generate_reference (olddecl, DECL_SOURCE_LOCATION (newdecl), 'c');
 
   /* We have committed to returning 1 at this point.  */
   if (TREE_CODE (newdecl) == FUNCTION_DECL)
@@ -12355,6 +12363,9 @@ finish_enum_value_list (tree enumtype)
       decl = TREE_VALUE (values);
       saved_location = input_location;
       input_location = DECL_SOURCE_LOCATION (decl);
+      
+      generate_enum_reference (decl, 0, '\0');
+
       if (fixed_underlying_type_p)
         /* If the enumeration type has a fixed underlying type, we
            already checked all of the enumerator values.  */

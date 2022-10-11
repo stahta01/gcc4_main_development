@@ -17,6 +17,8 @@
    E, F and G are passed on stack.  So the size of the stack argument
    data is 20.  */
 #define STACK_ARGUMENTS_SIZE  20
+#elif defined (__LMP__)
+#define STACK_ARGUMENTS_SIZE  4
 #else
 #define STACK_ARGUMENTS_SIZE  64
 #endif

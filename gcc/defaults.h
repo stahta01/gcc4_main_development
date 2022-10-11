@@ -1124,9 +1124,18 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #define CASE_VECTOR_PC_RELATIVE 0
 #endif
 
-/* Assume that trampolines need function alignment.  */
+/* Do not assume anything for run-time descriptors.  */
+#ifndef USE_RUNTIME_DESCRIPTORS
+#define USE_RUNTIME_DESCRIPTORS (-1)
+#endif
+
+/* Assume that trampolines need function alignment but make sure that
+   they are overaligned like code if runtime descriptors are used.  */
 #ifndef TRAMPOLINE_ALIGNMENT
-#define TRAMPOLINE_ALIGNMENT FUNCTION_BOUNDARY
+#define TRAMPOLINE_ALIGNMENT			\
+  (USE_RUNTIME_DESCRIPTORS == 1			\
+   ? MAX (FUNCTION_BOUNDARY, 2 * BITS_PER_UNIT)	\
+   : FUNCTION_BOUNDARY)
 #endif
 
 /* Register mappings for target machines without register windows.  */

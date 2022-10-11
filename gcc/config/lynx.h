@@ -25,6 +25,9 @@ along with GCC; see the file COPYING3.  If not see
    them here we might accidentally disable some target-specific
    defines.  */
 
+#undef TARGET_LYNXOS
+#define TARGET_LYNXOS 1
+
 #ifndef EXTRA_OS_LYNX_TARGET_SPECS
 # define EXTRA_OS_LYNX_TARGET_SPECS
 #endif
@@ -70,7 +73,8 @@ along with GCC; see the file COPYING3.  If not see
      %ecannot use mthreads and mlegacy-threads together}} \
  %{mthreads: -D_MULTITHREADED} \
  %{mlegacy-threads: -D_THREADS_POSIX4ad4} \
- -Asystem=lynx -Asystem=unix -D__Lynx__ -D__unix__"
+ -Asystem=lynx -Asystem=unix -D__Lynx__ -D__unix__ \
+ %{!nostdinc: %{isystem*} -idirafter %:getenv(ENV_PREFIX /usr/include)}"
 #endif
 
 #ifndef LIB_OS_LYNX_SPEC
@@ -96,27 +100,27 @@ along with GCC; see the file COPYING3.  If not see
  %{!mshared: %{!shared: %{!static: -static}}} \
  %{L*} \
  %{mthreads: \
-   %{mshared: -L/lib/thread/shlib -rpath /lib/thread/shlib} \
+   %{mshared: -L %:getenv(ENV_PREFIX /lib/thread/shlib) -rpath %:getenv(ENV_PREFIX /lib/thread/shlib)} \
    %{shared: \
-     %{!static: -L/lib/thread/shlib -rpath /lib/thread/shlib} \
-   %{!mshared: -L/lib/thread}} \
-   %{shared: %{static: -L/lib/thread}}} \
+     %{!static: -L %:getenv(ENV_PREFIX /lib/thread/shlib) -rpath %:getenv(ENV_PREFIX /lib/thread/shlib)} \
+   %{!mshared: -L %:getenv(ENV_PREFIX /lib/thread)}} \
+   %{shared: %{static: -L %:getenv(ENV_PREFIX /lib/thread)}}} \
  %{!mthreads: \
-   %{mshared: -L/lib/shlib -rpath /lib/shlib} \
-   %{shared: -L/lib/shlib -rpath /lib/shlib}} \
- %{mlegacy-threads:-lposix-pre1c} -lm -lc"
+   %{mshared: -L %:getenv(ENV_PREFIX /lib/shlib) -rpath %:getenv(ENV_PREFIX /lib/shlib)} \
+   %{shared: -L %:getenv(ENV_PREFIX /lib/shlib) -rpath %:getenv(ENV_PREFIX /lib/shlib)}} \
+ %{mthreads: -L %:getenv(ENV_PREFIX /lib/thread)} %{!mthreads: -L %:getenv(ENV_PREFIX /lib)} %{mlegacy-threads:-lposix-pre1c} -lm -lc"
 #endif
 
 #ifndef STARTFILE_OS_LYNX_SPEC
 # define STARTFILE_OS_LYNX_SPEC \
 "%{!shared: \
    %{!mthreads: \
-     %{p:gcrt1.o%s} %{pg:gcrt1.o%s} \
-     %{!p:%{!pg:crt1.o%s}}} \
+     %{p:%:getenv(ENV_PREFIX /lib/gcrt1.o)%s} %{pg:%:getenv(ENV_PREFIX /lib/gcrt1.o)%s} \
+     %{!p:%{!pg:%:getenv(ENV_PREFIX /lib/crt1.o)%s}}} \
    %{mthreads: \
-     %{p:thread/gcrt1.o%s} %{pg:thread/gcrt1.o%s} \
-     %{!p:%{!pg:thread/crt1.o%s }}}}\
- %{mthreads: thread/crti.o%s} %{!mthreads: crti.o%s} \
+     %{p:%:getenv(ENV_PREFIX /lib/thread/gcrt1.o)%s} %{pg:%:getenv(ENV_PREFIX /lib/thread/gcrt1.o)%s} \
+     %{!p:%{!pg:%:getenv(ENV_PREFIX /lib/thread/crt1.o)%s }}}}\
+ %{mthreads: %:getenv(ENV_PREFIX /lib/thread/crti.o)%s} %{!mthreads: %:getenv(ENV_PREFIX /lib/crti.o)%s} \
  %{!shared: crtbegin.o%s} \
  %{shared: crtbeginS.o%s}"
 #endif
@@ -125,7 +129,7 @@ along with GCC; see the file COPYING3.  If not see
 # define ENDFILE_OS_LYNX_SPEC \
 "%{!shared: crtend.o%s} \
  %{shared: crtendS.o%s} \
- %{mthreads: thread/crtn.o%s} %{!mthreads: crtn.o%s}"
+ %{mthreads: %:getenv(ENV_PREFIX /lib/thread/crtn.o)%s} %{!mthreads: %:getenv(ENV_PREFIX /lib/crtn.o)%s}"
 #endif
 
 /* Define the actual types of some ANSI-mandated types.  */
@@ -163,7 +167,7 @@ along with GCC; see the file COPYING3.  If not see
    the default on LynxOS.  */
 
 #ifndef PREFERRED_DEBUGGING_TYPE
-# define PREFERRED_DEBUGGING_TYPE DBX_DEBUG
+# define PREFERRED_DEBUGGING_TYPE DWARF2_DEBUG
 #endif
 
 /* We have C++ support in our system headers.  */

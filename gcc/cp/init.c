@@ -2369,7 +2369,7 @@ build_new_1 (VEC(tree,gc) **placement, tree type, tree nelts,
 					      /*conversion_path=*/NULL_TREE,
 					      LOOKUP_NORMAL,
 					      &alloc_fn,
-					      complain);
+					      complain, input_location);
 	}
       else
 	{
@@ -3579,7 +3579,7 @@ build_dtor_call (tree exp, special_function_kind dtor_kind, int flags,
 				/*conversion_path=*/NULL_TREE,
 				flags,
 				/*fn_p=*/NULL,
-				complain);
+				complain, input_location);
 }
 
 /* Generate a call to a destructor. TYPE is the type to cast ADDR to.

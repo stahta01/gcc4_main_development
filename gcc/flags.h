@@ -137,6 +137,9 @@ extern int dump_for_graph;
 /* Whether to emit an overflow warning whose code is C.  */
 #define issue_strict_overflow_warning(c) (warn_strict_overflow >= (int) (c))
 
+/* Nonzero means do CFG optimizations.  */
+#define optimize_cfg (optimize && !flag_preserve_control_flow)
+
 #endif
 
 #endif /* ! GCC_FLAGS_H */

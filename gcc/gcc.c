@@ -85,6 +85,12 @@ int is_cpp_driver;
 /* Flag set to nonzero if an @file argument has been supplied to gcc.  */
 static bool at_file_supplied;
 
+/* Whether evaluating env variables as part of specs processing is pointless,
+   typically when running for --version or --help.  This helps prevent
+   spurious errors when some variable referenced from self-specs happen to be
+   undefined.  */
+static bool spec_env_eval_is_pointless;
+
 /* Definition of string containing the arguments given to configure.  */
 #include "configargs.h"
 
@@ -964,12 +970,14 @@ static const struct compiler default_compilers[] =
 		%(cpp_options) -o %{save-temps*:%b.i} %{!save-temps*:%g.i} \n\
 		    cc1 -fpreprocessed %{save-temps*:%b.i} %{!save-temps*:%g.i} \
 			%(cc1_options)\
-                        %{!fdump-ada-spec*:-o %g.s %{!o*:--output-pch=%i.gch}\
-                        %W{o*:--output-pch=%*}}%V}\
+                        %{!fdump-ada-spec*:%{!fdump-xref*:-o %g.s \
+			%{!o*:--output-pch=%i.gch}\
+                        %W{o*:--output-pch=%*}}}%V}\
 	  %{!save-temps*:%{!traditional-cpp:%{!no-integrated-cpp:\
 		cc1 %(cpp_unique_options) %(cc1_options)\
-                    %{!fdump-ada-spec*:-o %g.s %{!o*:--output-pch=%i.gch}\
-                    %W{o*:--output-pch=%*}}%V}}}}}}", 0, 0, 0},
+                    %{!fdump-ada-spec*:%{!fdump-xref*:-o %g.s \
+		    %{!o*:--output-pch=%i.gch}\
+                    %W{o*:--output-pch=%*}}}%V}}}}}}", 0, 0, 0},
   {".i", "@cpp-output", 0, 0, 0},
   {"@cpp-output",
    "%{!M:%{!MM:%{!E:cc1 -fpreprocessed %i %(cc1_options) %{!fsyntax-only:%(invoke_as)}}}}", 0, 0, 0},
@@ -991,6 +999,11 @@ static const struct compiler default_compilers[] =
        as %(asm_debug) %(asm_options) %m.s %A }}}}"
 #endif
    , 0, 0, 0},
+
+  {".idl", "@idl", 0, 0, 0},
+  {"@idl",
+    "%{E:%(trad_capable_cpp) -lang-idl %(cpp_options) %(cpp_debug_options)}\
+     %{!E:%e-E required for IDL file}", 0, 0, 0},
 
 #include "specs.h"
   /* Mark end of table.  */
@@ -3992,6 +4005,8 @@ process_command (unsigned int decoded_options_count,
       /* Create a dummy input file, so that we can pass
 	 the help option on to the various sub-processes.  */
       add_infile ("help-dummy", "c");
+
+      spec_env_eval_is_pointless = true;
     }
 
   alloc_switch ();
@@ -5345,6 +5360,8 @@ eval_spec_function (const char *func, const char *args)
   int save_this_is_linker_script;
   const char *save_suffix_subst;
 
+  int save_growing_size;
+  void *save_growing_value;
 
   sf = lookup_spec_function (func);
   if (sf == NULL)
@@ -5360,6 +5377,18 @@ eval_spec_function (const char *func, const char *args)
   save_this_is_linker_script = this_is_linker_script;
   save_input_from_pipe = input_from_pipe;
   save_suffix_subst = suffix_subst;
+
+  /* If we have some object growing now, finalize it so the args and function
+     eval proceed from a cleared context.  This is needed to prevent the first
+     constructed arg from mistakenly including the growing value.  We'll push
+     this value back on the obstack once the function evaluation is done, to
+     restore a consistent processing context for our caller.  This is fine as
+     the address of growing objects isn't guaranteed to remain stable until
+     they are finalized, and we expect this situation to be rare enough for
+     the extra copy not to be an issue.  */
+  save_growing_size = obstack_object_size (&obstack);
+  if (save_growing_size > 0)
+    save_growing_value = obstack_finish (&obstack);
 
   /* Create a new spec processing context, and build the function
      arguments.  */
@@ -5385,6 +5414,9 @@ eval_spec_function (const char *func, const char *args)
   this_is_linker_script = save_this_is_linker_script;
   input_from_pipe = save_input_from_pipe;
   suffix_subst = save_suffix_subst;
+
+  if (save_growing_size > 0)
+    obstack_grow (&obstack, save_growing_value, save_growing_size);
 
   return funcval;
 }
@@ -6616,7 +6648,9 @@ main (int argc, char **argv)
 
       if (! verbose_flag)
 	{
-	  printf (_("\nFor bug reporting instructions, please see:\n"));
+	  printf (_("\nPlease submit a full bug report,\n\
+with preprocessed source if appropriate, \n\
+to:\n"));
 	  printf ("%s.\n", bug_report_url);
 
 	  return (0);
@@ -6636,8 +6670,11 @@ main (int argc, char **argv)
 	      version_string);
       printf ("Copyright %s 2012 Free Software Foundation, Inc.\n",
 	      _("(C)"));
-      fputs (_("This is free software; see the source for copying conditions.  There is NO\n\
-warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n"),
+      fputs (_("This is free software; see the source for copying conditions.\n\
+See your AdaCore support agreement for details of warranty and support.\n\
+If you do not have a current support agreement, then there is absolutely\n\
+no warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR\n\
+PURPOSE.\n\n"),
 	     stdout);
       if (! verbose_flag)
 	return 0;
@@ -6966,7 +7003,9 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n"
 
   if (print_help_list)
     {
-      printf (("\nFor bug reporting instructions, please see:\n"));
+      printf (("\nPlease submit a full bug report,\n\
+with preprocessed source if appropriate, \n\
+to:\n"));
       printf ("%s\n", bug_report_url);
     }
 
@@ -7858,9 +7897,11 @@ print_multilib_info (void)
 
 /* getenv built-in spec function.
 
-   Returns the value of the environment variable given by its first
-   argument, concatenated with the second argument.  If the
-   environment variable is not defined, a fatal error is issued.  */
+   Return NULL if the evaluation of environment variables from specs is
+   deemed pointless.  Otherwise, return the value of the environment
+   variable given by the first argument, concatenated with the second
+   argument.  If the environment variable is not defined, a fatal error is
+   issued.  */
 
 static const char *
 getenv_spec_function (int argc, const char **argv)
@@ -7872,6 +7913,12 @@ getenv_spec_function (int argc, const char **argv)
 
   if (argc != 2)
     return NULL;
+
+  if (spec_env_eval_is_pointless)
+    /* Even if the result isn't going to be used, we need to return something
+       here so a correct spec like, say, "-isystem %getenv(...)" isn't turned
+       into an invalid one with an argument-less option.  */
+    return "<unevaluated>";
 
   value = getenv (argv[0]);
   if (!value)

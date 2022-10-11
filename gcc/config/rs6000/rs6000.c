@@ -924,8 +924,8 @@ static bool rs6000_function_ok_for_sibcall (tree, tree);
 static const char *rs6000_invalid_within_doloop (const_rtx);
 static bool rs6000_legitimate_address_p (enum machine_mode, rtx, bool);
 static bool rs6000_debug_legitimate_address_p (enum machine_mode, rtx, bool);
+static bool rs6000_may_narrow_access_to (rtx, enum machine_mode);
 static rtx rs6000_generate_compare (rtx, enum machine_mode);
-static void rs6000_emit_stack_tie (void);
 static bool spe_func_has_64bit_regs_p (void);
 static rtx gen_frame_mem_offset (enum machine_mode, rtx, int);
 static unsigned rs6000_hash_constant (rtx);
@@ -1063,6 +1063,8 @@ static tree builtin_function_type (enum machine_mode, enum machine_mode,
 				   enum rs6000_builtins, const char *name);
 static void rs6000_common_init_builtins (void);
 static void rs6000_init_libfuncs (void);
+static void rs6000_vxworks_init_libfuncs (void) ATTRIBUTE_UNUSED;
+static void rs6000_lynxos_init_libfuncs (void) ATTRIBUTE_UNUSED;
 
 static void paired_init_builtins (void);
 static rtx paired_expand_builtin (tree, rtx, bool *);
@@ -1361,9 +1363,14 @@ static const struct attribute_spec rs6000_attribute_table[] =
 /* Default unaligned ops are only provided for ELF.  Find the ops needed
    for non-ELF systems.  */
 #ifndef OBJECT_FORMAT_ELF
+
+/* For XCOFF, use .vbyte.  We also use .vbyte on LynxOS/XCOFF targets
+   despite the fact that the system linker does not support it,
+   because the linker in question is a very old version of gas,
+   which is already unsuitable for this version of GCC.
+
+   rs6000_assemble_integer will handle unaligned DIs on 64-bit targets.  */
 #if TARGET_XCOFF
-/* For XCOFF.  rs6000_assemble_integer will handle unaligned DIs on
-   64-bit targets.  */
 #undef TARGET_ASM_UNALIGNED_HI_OP
 #define TARGET_ASM_UNALIGNED_HI_OP "\t.vbyte\t2,"
 #undef TARGET_ASM_UNALIGNED_SI_OP
@@ -1483,9 +1490,6 @@ static const struct attribute_spec rs6000_attribute_table[] =
 #undef TARGET_MANGLE_TYPE
 #define TARGET_MANGLE_TYPE rs6000_mangle_type
 
-#undef TARGET_INIT_LIBFUNCS
-#define TARGET_INIT_LIBFUNCS rs6000_init_libfuncs
-
 #if TARGET_MACHO
 #undef TARGET_BINDS_LOCAL_P
 #define TARGET_BINDS_LOCAL_P darwin_binds_local_p
@@ -1520,6 +1524,9 @@ static const struct attribute_spec rs6000_attribute_table[] =
 
 #undef TARGET_INIT_DWARF_REG_SIZES_EXTRA
 #define TARGET_INIT_DWARF_REG_SIZES_EXTRA rs6000_init_dwarf_reg_sizes_extra
+
+#undef TARGET_MEMBER_TYPE_FORCES_BLK
+#define TARGET_MEMBER_TYPE_FORCES_BLK rs6000_member_type_forces_blk
 
 /* On rs6000, function arguments are promoted, as are function return
    values.  */
@@ -1632,6 +1639,9 @@ static const struct attribute_spec rs6000_attribute_table[] =
 
 #undef TARGET_LEGITIMATE_ADDRESS_P
 #define TARGET_LEGITIMATE_ADDRESS_P rs6000_legitimate_address_p
+
+#undef TARGET_MAY_NARROW_ACCESS_TO
+#define TARGET_MAY_NARROW_ACCESS_TO rs6000_may_narrow_access_to
 
 #undef TARGET_MODE_DEPENDENT_ADDRESS_P
 #define TARGET_MODE_DEPENDENT_ADDRESS_P rs6000_mode_dependent_address_p
@@ -2605,7 +2615,10 @@ rs6000_option_override_internal (bool global_init_p)
 {
   bool ret = true;
   bool have_cpu = false;
-  const char *default_cpu = OPTION_TARGET_CPU_DEFAULT;
+
+  /* The default cpu requested at configure time, if any.  */
+  const char *implicit_cpu = OPTION_TARGET_CPU_DEFAULT;
+
   int set_masks;
   int cpu_index;
   int tune_index;
@@ -2623,11 +2636,6 @@ rs6000_option_override_internal (bool global_init_p)
       && TARGET_64BIT)
     warning (0, "-malign-power is not supported for 64-bit Darwin;"
 	     " it is incompatible with the installed C and C++ libraries");
-
-  if (global_options_set.x_rs6000_spe_abi
-      && rs6000_spe_abi
-      && !TARGET_SPE_ABI)
-    error ("not configured for SPE ABI");
 
   /* Numerous experiment shows that IRA based loop pressure
      calculation works better for RTL loop invariant motion on targets
@@ -2664,7 +2672,8 @@ rs6000_option_override_internal (bool global_init_p)
   /* Process the -mcpu=<xxx> and -mtune=<xxx> argument.  If the user changed
      the cpu in a target attribute or pragma, but did not specify a tuning
      option, use the cpu for the tuning option rather than the option specified
-     with -mtune on the command line.  */
+     with -mtune on the command line.  Process a '--with-cpu' configuration
+     request as an implicit --cpu.  */
   if (rs6000_cpu_index >= 0)
     {
       cpu_index = rs6000_cpu_index;
@@ -2677,10 +2686,12 @@ rs6000_option_override_internal (bool global_init_p)
     }
   else
     {
-      if (!default_cpu)
-	default_cpu = (TARGET_POWERPC64 ? "powerpc64" : "powerpc");
+      const char *default_cpu =
+        (implicit_cpu ? implicit_cpu
+         : (TARGET_POWERPC64 ? "powerpc64" : "powerpc"));
 
       rs6000_cpu_index = cpu_index = rs6000_cpu_name_lookup (default_cpu);
+      have_cpu = implicit_cpu != 0;
     }
 
   gcc_assert (cpu_index >= 0);
@@ -2710,6 +2721,42 @@ rs6000_option_override_internal (bool global_init_p)
 
   gcc_assert (tune_index >= 0);
   rs6000_cpu = processor_target_table[tune_index].processor;
+
+  /* Pick defaults for SPE related control flags.  Do this early to make sure
+     that the TARGET_ macros are representative ASAP.  */
+  {
+    int spe_capable_cpu =
+      (rs6000_cpu == PROCESSOR_PPC8540
+       || rs6000_cpu == PROCESSOR_PPC8548);
+
+    if (!global_options_set.x_rs6000_spe_abi)
+      rs6000_spe_abi = spe_capable_cpu;
+
+    if (!global_options_set.x_rs6000_spe)
+      rs6000_spe = spe_capable_cpu;
+
+    if (!global_options_set.x_rs6000_float_gprs)
+      rs6000_float_gprs =
+        (rs6000_cpu == PROCESSOR_PPC8540 ? 1
+         : rs6000_cpu == PROCESSOR_PPC8548 ? 2
+         : 0);
+  }
+
+  if (global_options_set.x_rs6000_spe_abi
+      && rs6000_spe_abi
+      && !TARGET_SPE_ABI)
+    error ("not configured for SPE ABI");
+
+  if (global_options_set.x_rs6000_spe
+      && rs6000_spe
+      && !TARGET_SPE)
+    error ("not configured for SPE instruction set");
+
+  if (main_target_opt != NULL
+      && ((main_target_opt->x_rs6000_spe_abi != rs6000_spe_abi)
+          || (main_target_opt->x_rs6000_spe != rs6000_spe)
+          || (main_target_opt->x_rs6000_float_gprs != rs6000_float_gprs)))
+    error ("target attribute or pragma changes SPE ABI");
 
   if (rs6000_cpu == PROCESSOR_PPCE300C2 || rs6000_cpu == PROCESSOR_PPCE300C3
       || rs6000_cpu == PROCESSOR_PPCE500MC || rs6000_cpu == PROCESSOR_PPCE500MC64)
@@ -2946,35 +2993,44 @@ rs6000_option_override_internal (bool global_init_p)
   SUB3TARGET_OVERRIDE_OPTIONS;
 #endif
 
-  if (TARGET_E500 || rs6000_cpu == PROCESSOR_PPCE500MC
-      || rs6000_cpu == PROCESSOR_PPCE500MC64)
+  /* For the E500 family of cores, reset the single/double FP flags to let us
+     check that they remain constant across attributes or pragmas.  Also,
+     clear a possible request for string instructions, not supported and which
+     we might have silently queried above for -Os. 
+
+     For other families, clear ISEL in case it was set implicitly.
+  */
+
+  switch (rs6000_cpu)
     {
-      /* The e500 and e500mc do not have string instructions, and we set
-	 MASK_STRING above when optimizing for size.  */
-      if ((target_flags & MASK_STRING) != 0)
-	target_flags = target_flags & ~MASK_STRING;
-    }
-  else if (global_options_set.x_rs6000_cpu_index)
-    {
-      /* For the powerpc-eabispe configuration, we set all these by
-	 default, so let's unset them if we manually set another
-	 CPU that is not the E500.  */
-      if (main_target_opt != NULL
-	  && ((main_target_opt->x_rs6000_spe_abi != rs6000_spe_abi)
-	      || (main_target_opt->x_rs6000_spe != rs6000_spe)
-	      || (main_target_opt->x_rs6000_float_gprs != rs6000_float_gprs)))
-	error ("target attribute or pragma changes SPE ABI");
-      else
-	{
-	  if (!global_options_set.x_rs6000_spe_abi)
-	    rs6000_spe_abi = 0;
-	  if (!global_options_set.x_rs6000_spe)
-	    rs6000_spe = 0;
-	  if (!global_options_set.x_rs6000_float_gprs)
-	    rs6000_float_gprs = 0;
-	}
-      if (!(target_flags_explicit & MASK_ISEL))
+    case PROCESSOR_PPC8540:
+    case PROCESSOR_PPC8548:
+    case PROCESSOR_PPCE500MC:
+    case PROCESSOR_PPCE500MC64:
+
+      rs6000_single_float = TARGET_E500_SINGLE || TARGET_E500_DOUBLE;
+      rs6000_double_float = TARGET_E500_DOUBLE;
+
+      target_flags &= ~MASK_STRING;
+
+      break;
+
+    default:
+
+      if (have_cpu && !(target_flags_explicit & MASK_ISEL))
 	target_flags &= ~MASK_ISEL;
+
+      break;
+    }
+
+  if (main_target_opt)
+    {
+      if (main_target_opt->x_rs6000_single_float != rs6000_single_float)
+	error ("target attribute or pragma changes single precision floating "
+	       "point");
+      if (main_target_opt->x_rs6000_double_float != rs6000_double_float)
+	error ("target attribute or pragma changes double precision floating "
+	       "point");
     }
 
   /* Detect invalid option combinations with E500.  */
@@ -3201,6 +3257,7 @@ rs6000_option_override_internal (bool global_init_p)
 	break;
 
       case PROCESSOR_PPC8540:
+      case PROCESSOR_PPC8548:
 	rs6000_cost = &ppc8540_cost;
 	break;
 
@@ -3272,26 +3329,6 @@ rs6000_option_override_internal (bool global_init_p)
   if (TARGET_HARD_FLOAT && TARGET_FPRS 
       && rs6000_single_float == 0 && rs6000_double_float == 0)
     rs6000_single_float = rs6000_double_float = 1;
-
-  /* Reset single and double FP flags if target is E500. */
-  if (TARGET_E500) 
-  {
-    rs6000_single_float = rs6000_double_float = 0;
-    if (TARGET_E500_SINGLE)
-      rs6000_single_float = 1; 
-    if (TARGET_E500_DOUBLE)
-      rs6000_single_float = rs6000_double_float = 1;
-  }
-
-  if (main_target_opt)
-    {
-      if (main_target_opt->x_rs6000_single_float != rs6000_single_float)
-	error ("target attribute or pragma changes single precision floating "
-	       "point");
-      if (main_target_opt->x_rs6000_double_float != rs6000_double_float)
-	error ("target attribute or pragma changes double precision floating "
-	       "point");
-    }
 
   /* If not explicitly specified via option, decide whether to generate indexed
      load/store instructions.  */
@@ -6492,36 +6529,18 @@ rs6000_mode_dependent_address_p (const_rtx addr)
   return rs6000_mode_dependent_address_ptr (addr);
 }
 
-/* Go to LABEL if ADDR (a legitimate address expression)
-   has an effect that depends on the machine mode it is used for.
-
-   On the RS/6000 this is true of all integral offsets (since AltiVec
-   and VSX modes don't allow them) or is a pre-increment or decrement.
-
-   ??? Except that due to conceptual problems in offsettable_address_p
-   we can't really report the problems of integral offsets.  So leave
-   this assuming that the adjustable offset must be valid for the
-   sub-words of a TFmode operand, which is what we had before.  */
+/* Whether ADDR, a legitimate address expression, has an effect that depends
+   on the machine mode it is used for.  */
 
 static bool
 rs6000_mode_dependent_address (const_rtx addr)
 {
   switch (GET_CODE (addr))
     {
+      /* AltiVec modes don't allow integral offsets.  */
     case PLUS:
-      /* Any offset from virtual_stack_vars_rtx and arg_pointer_rtx
-	 is considered a legitimate address before reload, so there
-	 are no offset restrictions in that case.  Note that this
-	 condition is safe in strict mode because any address involving
-	 virtual_stack_vars_rtx or arg_pointer_rtx would already have
-	 been rejected as illegitimate.  */
-      if (XEXP (addr, 0) != virtual_stack_vars_rtx
-	  && XEXP (addr, 0) != arg_pointer_rtx
-	  && GET_CODE (XEXP (addr, 1)) == CONST_INT)
-	{
-	  unsigned HOST_WIDE_INT val = INTVAL (XEXP (addr, 1));
-	  return val + 12 + 0x8000 >= 0x10000;
-	}
+      if (GET_CODE (XEXP (addr, 1)) == CONST_INT)
+        return true;
       break;
 
     case LO_SUM:
@@ -6578,13 +6597,28 @@ rs6000_find_base_term (rtx op)
   return op;
 }
 
-/* More elaborate version of recog's offsettable_memref_p predicate
-   that works around the ??? note of rs6000_mode_dependent_address.
-   In particular it accepts
+/* Whether ADDR, a legitimate address expression for MODE, may be accessed
+   using a narrower mode for the purpose of an "offsettable" reference.  */
+ 
+bool
+rs6000_may_narrow_access_to (rtx addr, enum machine_mode mode ATTRIBUTE_UNUSED)
+{
+  switch (GET_CODE (addr))
+    {
+    case LO_SUM:
+      return false;
+ 
+    case PRE_INC:
+    case PRE_DEC:
+      return !TARGET_UPDATE;
 
-     (mem:DI (plus:SI (reg/f:SI 31 31) (const_int 32760 [0x7ff8])))
+    default:
+      return true;
+    }
+}
 
-   in 32-bit mode, that the recog predicate rejects.  */
+/* More elaborate version of recog's offsettable_memref_p predicate,
+   accounting for the access mode more accurately.  */
 
 bool
 rs6000_offsettable_memref_p (rtx op)
@@ -6592,16 +6626,12 @@ rs6000_offsettable_memref_p (rtx op)
   if (!MEM_P (op))
     return false;
 
-  /* First mimic offsettable_memref_p.  */
+  /* See if offsettable_memref_p answers right away.  Examine the access mode
+     more accurately otherwise.  */
+
   if (offsettable_address_p (1, GET_MODE (op), XEXP (op, 0)))
     return true;
 
-  /* offsettable_address_p invokes rs6000_mode_dependent_address, but
-     the latter predicate knows nothing about the mode of the memory
-     reference and, therefore, assumes that it is the largest supported
-     mode (TFmode).  As a consequence, legitimate offsettable memory
-     references are rejected.  rs6000_legitimate_offset_address_p contains
-     the correct logic for the PLUS case of rs6000_mode_dependent_address.  */
   return rs6000_legitimate_offset_address_p (GET_MODE (op), XEXP (op, 0), 1);
 }
 
@@ -7345,6 +7375,26 @@ rs6000_emit_move (rtx dest, rtx source, enum machine_mode mode)
 
  emit_set:
   emit_insn (gen_rtx_SET (VOIDmode, operands[0], operands[1]));
+}
+
+/* Return true if a structure, union or array containing FIELD should be
+   accessed using `BLKMODE'.
+
+   For the SPE, simd types are V2SI, and gcc can be tempted to put the
+   entire thing in a DI and use subregs to access the internals.
+   store_bit_field() will force (subreg:DI (reg:V2SI x))'s to the
+   back-end.  Because a single GPR can hold a V2SI, but not a DI, the
+   best thing to do is set structs to BLKmode and avoid Severe Tire
+   Damage.
+
+   On e500 v2, DF and DI modes suffer from the same anomaly.  DF can
+   fit into 1, whereas DI still needs two.  */
+
+static bool
+rs6000_member_type_forces_blk (const_tree field, enum machine_mode mode)
+{
+  return ((TARGET_SPE && TREE_CODE (TREE_TYPE (field)) == VECTOR_TYPE)
+	  || (TARGET_E500_DOUBLE && mode == DFmode));
 }
 
 /* Nonzero if we can use a floating-point register to pass this arg.  */
@@ -11397,9 +11447,6 @@ rs6000_expand_builtin (tree exp, rtx target, rtx subtarget ATTRIBUTE_UNUSED,
     case RS6000_BUILTIN_RSQRT:
       return rs6000_expand_unop_builtin (CODE_FOR_rsqrtdf2, exp, target);
 
-    case RS6000_BUILTIN_BSWAP_HI:
-      return rs6000_expand_unop_builtin (CODE_FOR_bswaphi2, exp, target);
-
     case POWER7_BUILTIN_BPERMD:
       return rs6000_expand_binop_builtin (((TARGET_64BIT)
 					   ? CODE_FOR_bpermd_di
@@ -11734,12 +11781,6 @@ rs6000_init_builtins (void)
   ftype = builtin_function_type (mode, mode, mode, VOIDmode,
 				 POWER7_BUILTIN_BPERMD, "__builtin_bpermd");
   def_builtin ("__builtin_bpermd", ftype, POWER7_BUILTIN_BPERMD);
-
-      /* Don't use builtin_function_type here, as it maps HI/QI to SI.  */
-  ftype = build_function_type_list (unsigned_intHI_type_node,
-				    unsigned_intHI_type_node,
-				    NULL_TREE);
-  def_builtin ("__builtin_bswap16", ftype, RS6000_BUILTIN_BSWAP_HI);
 
 #if TARGET_XCOFF
   /* AIX libm provides clog as __clog.  */
@@ -12884,6 +12925,59 @@ rs6000_init_libfuncs (void)
     }
 }
 
+/* Use the Vxworks Diab compiler library functions for div and mod because
+   certRtp.o/__udivdi3, at least, is broken for 64-bit division in VxWorks
+   Cert RTP.  And also open-code the __floatdi routines because they are
+   missing in the same configuration.  For other versions of VxWorks the
+   functions are available and functionally equivalent so we use them, as
+   there is no easy way to test that we are compiling for Cert and also to
+   keep the compiled code looking the same across all versions of VxWorks.  */
+static void
+rs6000_vxworks_init_libfuncs (void)
+{
+  rs6000_init_libfuncs ();
+
+  set_optab_libfunc (sdiv_optab, DImode, "__div64");
+  set_optab_libfunc (udiv_optab, DImode, "__udiv64");
+  set_optab_libfunc (smod_optab, DImode, "__rem64");
+  set_optab_libfunc (umod_optab, DImode, "__urem64");
+
+  if (TARGET_HARD_FLOAT)
+    {
+      set_conv_libfunc (sfloat_optab, SFmode, DImode, NULL);
+      set_conv_libfunc (ufloat_optab, SFmode, DImode, NULL);
+      set_conv_libfunc (sfloat_optab, DFmode, DImode, NULL);
+      set_conv_libfunc (ufloat_optab, DFmode, DImode, NULL);
+    }
+}
+
+/* The certified libgcc of LynxOS-178 provides neither the __moddi3 routine
+   (although it provides __umoddi3) nor the __fixdi & __floatdi routines so
+   we open-code them.  We do it in the generic part of the middle-end and
+   not in the PowerPC back-end to prevent the RTL expander from believing
+   that we have an efficient implementation for them.  */
+static void
+rs6000_lynxos_init_libfuncs (void)
+{
+  rs6000_init_libfuncs ();
+
+  set_optab_libfunc (smod_optab, DImode, NULL);
+  set_optab_libfunc (sdivmod_optab, DImode, NULL);
+  set_optab_libfunc (udivmod_optab, DImode, NULL);
+
+  if (TARGET_HARD_FLOAT)
+    {
+      set_conv_libfunc (sfix_optab, DImode, SFmode, NULL);
+      set_conv_libfunc (ufix_optab, DImode, SFmode, NULL);
+      set_conv_libfunc (sfix_optab, DImode, DFmode, NULL);
+      set_conv_libfunc (ufix_optab, DImode, DFmode, NULL);
+
+      set_conv_libfunc (sfloat_optab, SFmode, DImode, NULL);
+      set_conv_libfunc (ufloat_optab, SFmode, DImode, NULL);
+      set_conv_libfunc (sfloat_optab, DFmode, DImode, NULL);
+      set_conv_libfunc (ufloat_optab, DFmode, DImode, NULL);
+    }
+}
 
 /* Expand a block clear operation, and return 1 if successful.  Return 0
    if we should let the compiler generate normal code.
@@ -15472,7 +15566,7 @@ rs6000_output_addr_const_extra (FILE *file, rtx x)
 	      fprintf (file, "+");
 	    output_addr_const (file, tocrel_offset);
 	  }
-	if (!TARGET_AIX || (TARGET_ELF && TARGET_MINIMAL_TOC))
+        if (!TARGET_AIX || (TARGET_ELF && TARGET_MINIMAL_TOC))
 	  {
 	    putc ('-', file);
 	    assemble_name (file, toc_label_name);
@@ -15638,16 +15732,41 @@ rs6000_generate_compare (rtx cmp, enum machine_mode mode)
     {
       rtx cmp, or_result, compare_result2;
       enum machine_mode op_mode = GET_MODE (op0);
+      bool reverse_p;
 
       if (op_mode == VOIDmode)
 	op_mode = GET_MODE (op1);
+
+      /* First reverse the condition codes that aren't directly supported.  */
+      switch (code)
+	{
+	  case NE:
+	  case UNLT:
+	  case UNLE:
+	  case UNGT:
+	  case UNGE:
+	    code = reverse_condition_maybe_unordered (code);
+	    reverse_p = true;
+	    break;
+
+	  case EQ:
+	  case LT:
+	  case LE:
+	  case GT:
+	  case GE:
+	    reverse_p = false;
+	    break;
+
+	  default:
+	    gcc_unreachable ();
+	}
 
       /* The E500 FP compare instructions toggle the GT bit (CR bit 1) only.
 	 This explains the following mess.  */
 
       switch (code)
 	{
-	case EQ: case UNEQ: case NE: case LTGT:
+	case EQ:
 	  switch (op_mode)
 	    {
 	    case SFmode:
@@ -15673,7 +15792,8 @@ rs6000_generate_compare (rtx cmp, enum machine_mode mode)
 	    }
 	  break;
 
-	case GT: case GTU: case UNGT: case UNGE: case GE: case GEU:
+	case GT:
+	case GE:
 	  switch (op_mode)
 	    {
 	    case SFmode:
@@ -15699,7 +15819,8 @@ rs6000_generate_compare (rtx cmp, enum machine_mode mode)
 	    }
 	  break;
 
-	case LT: case LTU: case UNLT: case UNLE: case LE: case LEU:
+	case LT: 
+	case LE:
 	  switch (op_mode)
 	    {
 	    case SFmode:
@@ -15724,23 +15845,15 @@ rs6000_generate_compare (rtx cmp, enum machine_mode mode)
 	      gcc_unreachable ();
 	    }
 	  break;
+
         default:
           gcc_unreachable ();
 	}
 
       /* Synthesize LE and GE from LT/GT || EQ.  */
-      if (code == LE || code == GE || code == LEU || code == GEU)
+      if (code == LE || code == GE)
 	{
 	  emit_insn (cmp);
-
-	  switch (code)
-	    {
-	    case LE: code = LT; break;
-	    case GE: code = GT; break;
-	    case LEU: code = LT; break;
-	    case GEU: code = GT; break;
-	    default: gcc_unreachable ();
-	    }
 
 	  compare_result2 = gen_reg_rtx (CCFPmode);
 
@@ -15768,22 +15881,17 @@ rs6000_generate_compare (rtx cmp, enum machine_mode mode)
 	    default:
 	      gcc_unreachable ();
 	    }
+
 	  emit_insn (cmp);
 
 	  /* OR them together.  */
 	  or_result = gen_reg_rtx (CCFPmode);
 	  cmp = gen_e500_cr_ior_compare (or_result, compare_result,
-					   compare_result2);
+					 compare_result2);
 	  compare_result = or_result;
-	  code = EQ;
 	}
-      else
-	{
-	  if (code == NE || code == LTGT)
-	    code = NE;
-	  else
-	    code = EQ;
-	}
+
+      code = reverse_p ? NE : EQ;
 
       emit_insn (cmp);
     }
@@ -18565,12 +18673,29 @@ rs6000_aix_asm_output_dwarf_table_ref (char * frame_table_label)
    and the change to the stack pointer.  */
 
 static void
-rs6000_emit_stack_tie (void)
+rs6000_emit_stack_tie (rtx fp, bool hard_frame_needed)
 {
-  rtx mem = gen_frame_mem (BLKmode,
-			   gen_rtx_REG (Pmode, STACK_POINTER_REGNUM));
+  rtvec p;
+  int i;
+  rtx regs[3];
 
-  emit_insn (gen_stack_tie (mem));
+  i = 0;
+  regs[i++] = gen_rtx_REG (Pmode, STACK_POINTER_REGNUM);
+  if (hard_frame_needed)
+    regs[i++] = gen_rtx_REG (Pmode, HARD_FRAME_POINTER_REGNUM);
+  if (!(REGNO (fp) == STACK_POINTER_REGNUM
+	|| (hard_frame_needed
+	    && REGNO (fp) == HARD_FRAME_POINTER_REGNUM)))
+    regs[i++] = fp;
+
+  p = rtvec_alloc (i);
+  while (--i >= 0)
+    {
+      rtx mem = gen_frame_mem (BLKmode, regs[i]);
+      RTVEC_ELT (p, i) = gen_rtx_SET (VOIDmode, mem, const0_rtx);
+    }
+
+  emit_insn (gen_stack_tie (gen_rtx_PARALLEL (VOIDmode, p)));
 }
 
 /* Emit the correct code for allocating stack space, as insns.
@@ -18671,9 +18796,28 @@ rs6000_emit_allocate_stack (HOST_WIDE_INT size, rtx copy_reg)
 static void
 rs6000_emit_probe_stack_range (HOST_WIDE_INT first, HOST_WIDE_INT size)
 {
+  /* See if we have a symbol to compare the lower stack address with.  If so,
+     generate a trap if that address is beyond the symbol's value.  */
+  if (stack_check_symbol)
+    {
+      rtx r12 = gen_rtx_REG (Pmode, 12);
+      rtx r0 = gen_rtx_REG (Pmode, 0);
+
+      emit_insn (gen_addsi3 (r0, stack_pointer_rtx,
+			     GEN_INT (-(first + size))));
+      emit_insn (gen_rtx_SET (VOIDmode, r12,
+			      gen_rtx_HIGH (Pmode, stack_check_symbol)));
+      emit_insn (gen_rtx_SET (VOIDmode, r12,
+			      gen_rtx_MEM (Pmode,
+					   gen_rtx_LO_SUM
+					   (Pmode, r12,
+					    stack_check_symbol))));
+      emit_insn (gen_cond_trap (LTU, r0, r12, const0_rtx));
+    }
+
   /* See if we have a constant small number of probes to generate.  If so,
      that's the easy case.  */
-  if (first + size <= 32768)
+  else if (first + size <= 32768)
     {
       HOST_WIDE_INT i;
 
@@ -19190,7 +19334,7 @@ rs6000_emit_stack_reset (rs6000_stack_t *info,
       || (TARGET_SPE_ABI
 	  && info->spe_64bit_regs_used != 0
 	  && info->first_gp_reg_save != 32))
-    rs6000_emit_stack_tie ();
+    rs6000_emit_stack_tie (frame_reg_rtx, frame_pointer_needed);
   
   if (frame_reg_rtx != sp_reg_rtx)
     {
@@ -19344,8 +19488,19 @@ rs6000_emit_prologue (void)
   if (flag_stack_usage_info)
     current_function_static_stack_size = info->total_size;
 
-  if (flag_stack_check == STATIC_BUILTIN_STACK_CHECK && info->total_size)
-    rs6000_emit_probe_stack_range (STACK_CHECK_PROTECT, info->total_size);
+  if (flag_stack_check == STATIC_BUILTIN_STACK_CHECK)
+    {
+      HOST_WIDE_INT size = info->total_size;
+
+      if (current_function_is_leaf && !cfun->calls_alloca)
+	{
+	  if (size > PROBE_INTERVAL && size > STACK_CHECK_PROTECT)
+	    rs6000_emit_probe_stack_range (STACK_CHECK_PROTECT,
+					   size - STACK_CHECK_PROTECT);
+	}
+      else if (size > 0)
+	rs6000_emit_probe_stack_range (STACK_CHECK_PROTECT, size);
+    }
 
   if (TARGET_FIX_AND_CONTINUE)
     {
@@ -19410,7 +19565,7 @@ rs6000_emit_prologue (void)
 	}
       rs6000_emit_allocate_stack (info->total_size, copy_reg);
       if (frame_reg_rtx != sp_reg_rtx)
-	rs6000_emit_stack_tie ();
+	rs6000_emit_stack_tie (frame_reg_rtx, false);
     }
 
   /* Handle world saves specially here.  */
@@ -19914,7 +20069,7 @@ rs6000_emit_prologue (void)
 	sp_offset = info->total_size;
       rs6000_emit_allocate_stack (info->total_size, copy_reg);
       if (frame_reg_rtx != sp_reg_rtx)
-	rs6000_emit_stack_tie ();
+	rs6000_emit_stack_tie (frame_reg_rtx, false);
     }
 
   /* Set frame pointer, if needed.  */
@@ -20485,13 +20640,7 @@ rs6000_emit_epilogue (int sibcall)
       /* Prevent reordering memory accesses against stack pointer restore.  */
       else if (cfun->calls_alloca
 	       || offset_below_red_zone_p (-info->total_size))
-	{
-	  rtx mem1 = gen_rtx_MEM (BLKmode, hard_frame_pointer_rtx);
-	  rtx mem2 = gen_rtx_MEM (BLKmode, sp_reg_rtx);
-	  MEM_NOTRAP_P (mem1) = 1;
-	  MEM_NOTRAP_P (mem2) = 1;
-	  emit_insn (gen_frame_tie (mem1, mem2));
-	}
+	rs6000_emit_stack_tie (frame_reg_rtx, true);
 
       insn = emit_insn (gen_add3_insn (frame_reg_rtx, hard_frame_pointer_rtx,
 				       GEN_INT (info->total_size)));
@@ -20504,11 +20653,7 @@ rs6000_emit_epilogue (int sibcall)
       /* Prevent reordering memory accesses against stack pointer restore.  */
       if (cfun->calls_alloca
 	  || offset_below_red_zone_p (-info->total_size))
-	{
-	  rtx mem = gen_rtx_MEM (BLKmode, sp_reg_rtx);
-	  MEM_NOTRAP_P (mem) = 1;
-	  emit_insn (gen_stack_tie (mem));
-	}
+	rs6000_emit_stack_tie (frame_reg_rtx, false);
       insn = emit_insn (gen_add3_insn (sp_reg_rtx, sp_reg_rtx,
 				       GEN_INT (info->total_size)));
       sp_offset = 0;
@@ -22860,6 +23005,7 @@ rs6000_issue_rate (void)
   case CPU_PPC750:
   case CPU_PPC7400:
   case CPU_PPC8540:
+  case CPU_PPC8548:
   case CPU_CELL:
   case CPU_PPCE300C2:
   case CPU_PPCE300C3:
@@ -22890,11 +23036,18 @@ rs6000_issue_rate (void)
 static int
 rs6000_use_sched_lookahead (void)
 {
-  if (rs6000_cpu_attr == CPU_PPC8540)
-    return 4;
-  if (rs6000_cpu_attr == CPU_CELL)
-    return (reload_completed ? 8 : 0);
-  return 0;
+  switch (rs6000_cpu_attr)
+    {
+    case CPU_PPC8540:
+    case CPU_PPC8548:
+      return 4;
+
+    case CPU_CELL:
+      return (reload_completed ? 8 : 0);
+
+    default:
+      return 0;
+    }
 }
 
 /* We are choosing insn from the ready queue.  Return nonzero if INSN can be chosen.  */
@@ -22925,8 +23078,7 @@ find_mem_ref (rtx pat, rtx *mem_ref)
   int i, j;
 
   /* stack_tie does not produce any real memory traffic.  */
-  if (GET_CODE (pat) == UNSPEC
-      && XINT (pat, 1) == UNSPEC_TIE)
+  if (tie_operand (pat, VOIDmode))
     return false;
 
   if (GET_CODE (pat) == MEM)
@@ -25230,6 +25382,12 @@ rs6000_xcoff_asm_named_section (const char *name, unsigned int flags,
 {
   int smclass;
   static const char * const suffix[3] = { "PR", "RO", "RW" };
+
+  if (flags & SECTION_DEBUG)
+    {
+      fprintf (asm_out_file, "\t.section %s\n", name);
+      return;
+    }
 
   if (flags & SECTION_CODE)
     smclass = 0;

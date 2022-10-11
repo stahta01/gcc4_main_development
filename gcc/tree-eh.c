@@ -498,7 +498,15 @@ replace_goto_queue_1 (gimple stmt, struct leh_tf_state *tf,
       seq = find_goto_replacement (tf, temp);
       if (seq)
 	{
-	  gsi_insert_seq_before (gsi, gimple_seq_copy (seq), GSI_SAME_STMT);
+	  gimple_stmt_iterator i;
+	  seq = gimple_seq_copy (seq);
+	  for (i = gsi_start (seq); !gsi_end_p (i); gsi_next (&i))
+	    {
+	      gimple gs = gsi_stmt (i);
+	      gimple_set_location (gs, gimple_location (stmt));
+	      gimple_set_block (gs, gimple_block (stmt));
+	    }
+	  gsi_insert_seq_before (gsi, seq, GSI_SAME_STMT);
 	  gsi_remove (gsi, false);
 	  return;
 	}
@@ -793,9 +801,10 @@ emit_resx (gimple_seq *seq, eh_region region)
 /* Emit an EH_DISPATCH statement into SEQ for REGION.  */
 
 static void
-emit_eh_dispatch (gimple_seq *seq, eh_region region)
+emit_eh_dispatch (gimple_seq *seq, eh_region region, location_t loc)
 {
   gimple x = gimple_build_eh_dispatch (region->index);
+  gimple_set_location (x, loc);
   gimple_seq_add_stmt (seq, x);
 }
 
@@ -1718,7 +1727,7 @@ lower_catch (struct leh_state *state, gimple tp)
     return gimple_try_eval (tp);
 
   new_seq = NULL;
-  emit_eh_dispatch (&new_seq, try_region);
+  emit_eh_dispatch (&new_seq, try_region, try_catch_loc);
   emit_resx (&new_seq, try_region);
 
   this_state.cur_region = state->cur_region;
@@ -1792,7 +1801,7 @@ lower_eh_filter (struct leh_state *state, gimple tp)
   this_state.cur_region = state->cur_region;
   this_state.ehp_region = this_region;
 
-  emit_eh_dispatch (&new_seq, this_region);
+  emit_eh_dispatch (&new_seq, this_region, gimple_location (tp));
   emit_resx (&new_seq, this_region);
 
   this_region->u.allowed.label = create_artificial_label (UNKNOWN_LOCATION);
@@ -3373,6 +3382,7 @@ lower_eh_dispatch (basic_block src, gimple stmt)
 	    fn = builtin_decl_implicit (BUILT_IN_EH_FILTER);
 	    x = gimple_build_call (fn, 1, build_int_cst (integer_type_node,
 							 region_nr));
+	    gimple_set_location (x, gimple_location (stmt));
 	    filter = create_tmp_var (TREE_TYPE (TREE_TYPE (fn)), NULL);
 	    filter = make_ssa_name (filter, x);
 	    gimple_call_set_lhs (x, filter);
@@ -3383,6 +3393,7 @@ lower_eh_dispatch (basic_block src, gimple stmt)
 	    sort_case_labels (labels);
 
 	    x = gimple_build_switch_vec (filter, default_label, labels);
+	    gimple_set_location (x, gimple_location (stmt));
 	    gsi_insert_before (&gsi, x, GSI_SAME_STMT);
 
 	    VEC_free (tree, heap, labels);
@@ -3399,6 +3410,7 @@ lower_eh_dispatch (basic_block src, gimple stmt)
 	fn = builtin_decl_implicit (BUILT_IN_EH_FILTER);
 	x = gimple_build_call (fn, 1, build_int_cst (integer_type_node,
 						     region_nr));
+	gimple_set_location (x, gimple_location (stmt));
 	filter = create_tmp_var (TREE_TYPE (TREE_TYPE (fn)), NULL);
 	filter = make_ssa_name (filter, x);
 	gimple_call_set_lhs (x, filter);

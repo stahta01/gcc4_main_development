@@ -23,8 +23,13 @@ along with GCC; see the file COPYING3.  If not see
 #define GCC_INPUT_H
 
 #include "line-map.h"
+#include "coretypes.h"
 
 extern GTY(()) struct line_maps *line_table;
+
+extern int *instance_table;
+
+extern bitmap *multi_stmt_lines;
 
 /* A value which will never be used to represent a real location.  */
 #define UNKNOWN_LOCATION ((source_location) 0)
@@ -37,7 +42,10 @@ extern GTY(()) struct line_maps *line_table;
 extern char builtins_location_check[(BUILTINS_LOCATION
 				     < RESERVED_LOCATION_COUNT) ? 1 : -1];
 
-extern expanded_location expand_location (source_location);
+extern expanded_location expand_location_1 (source_location,
+					    const struct line_map **);
+
+#define expand_location(LOC) expand_location_1 ((LOC), NULL)
 
 /* Historically GCC used location_t, while cpp used source_location.
    This could be removed but it hardly seems worth the effort.  */

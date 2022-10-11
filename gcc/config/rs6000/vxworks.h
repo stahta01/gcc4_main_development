@@ -1,5 +1,6 @@
 /* Definitions of target machine for GNU compiler.  Vxworks PowerPC version.
-   Copyright (C) 1996, 2000, 2002, 2003, 2004, 2005, 2007, 2009, 2010, 2011
+   Copyright (C) 1996, 2000, 2002, 2003, 2004, 2005, 2007, 2009, 2010, 2011,
+   2013
    Free Software Foundation, Inc.
    Contributed by CodeSourcery, LLC.
 
@@ -63,6 +64,13 @@ along with GCC; see the file COPYING3.  If not see
 
 /* FIXME: The only reason we allow no -mcpu switch at all is because
    config-ml.in insists on a "." multilib. */
+
+/* VxWorks and VxWorksAE (aka 653) expect different CPU values to designate
+   SPE on 8548.  We define a dedicated macro for the base VxWorks here, which
+   the AE configuration will override.  */
+
+#define VXCPU_FOR_8548 "PPC85XX"
+
 #define CPP_SPEC \
 "%{!DCPU=*:		  \
    %{mcpu=403 : -DCPU=PPC403  ; \
@@ -74,6 +82,7 @@ along with GCC; see the file COPYING3.  If not see
      mcpu=604 : -DCPU=PPC604  ; \
      mcpu=860 : -DCPU=PPC860  ; \
      mcpu=8540: -DCPU=PPC85XX ; \
+     mcpu=8548: -DCPU=" VXCPU_FOR_8548 ";        \
               : -DCPU=PPC604  }}" \
 VXWORKS_ADDITIONAL_CPP_SPEC
 
@@ -87,13 +96,56 @@ VXWORKS_ADDITIONAL_CPP_SPEC
  %{mrelocatable} %{mrelocatable-lib} %{fpic:-K PIC} %{fPIC:-K PIC} -mbig"
 
 #undef  LIB_SPEC
-#define LIB_SPEC VXWORKS_LIB_SPEC
+#define LIB_SPEC VXWORKS_LIB_SPEC \
+ "%{mrtp:%{!shared: \
+    %{vxcert: -l:certRtp.o \
+      %{mcpu=8548: \
+        -L%:getenv(WIND_BASE /target/usr/lib_cert_rtp/ppc/PPC32/e500v2common) \
+       } \
+      %{!mcpu=8548: \
+        -L%:getenv(WIND_BASE /target/usr/lib_cert_rtp/ppc/PPC32/common) \
+       } \
+     } \
+    %{!vxcert:%{vxsmp: \
+      %{mcpu=8548: \
+        -L%:getenv(WIND_BASE /target/lib_smp/usr/lib/ppc/PPC32/e500v2common)} \
+      %{!mcpu=8548: \
+        -L%:getenv(WIND_BASE /target/lib_smp/usr/lib/ppc/PPC32/common)} \
+    }} \
+    %{!vxcert:%{!vxsmp: \
+      %{mcpu=8548: \
+        -L%:if-exists-else( \
+            %:getenv(WIND_BASE /target/lib/usr/lib/ppc/PPC32/e500v2common) \
+            %:getenv(WIND_BASE /target/usr/lib/ppc/PPC32/e500v2common)) \
+       } \
+      %{!mcpu=8548: \
+        -L%:if-exists-else( \
+            %:getenv(WIND_BASE /target/lib/usr/lib/ppc/PPC32/common) \
+            %:getenv(WIND_BASE /target/usr/lib/ppc/PPC32/common)) \
+       } \
+    }} \
+ }}"
+
 #undef  LINK_SPEC
 #define LINK_SPEC VXWORKS_LINK_SPEC
 #undef  STARTFILE_SPEC
 #define STARTFILE_SPEC VXWORKS_STARTFILE_SPEC
 #undef  ENDFILE_SPEC
 #define ENDFILE_SPEC VXWORKS_ENDFILE_SPEC
+
+/* Setup to produce unwind info for DW2 eh and to
+   configure crtstuff accordingly.  */
+
+#undef  DWARF2_UNWIND_INFO
+#define DWARF2_UNWIND_INFO 1
+
+#define HAS_INIT_SECTION
+#undef  INIT_SECTION_ASM_OP
+#undef  FINI_SECTION_ASM_OP
+
+#define USE_EH_FRAME_REGISTRY
+#define USE_TM_CLONE_REGISTRY 0
+#define TARGET_USE_JCR_SECTION 0
 
 /* There is no default multilib.  */
 #undef MULTILIB_DEFAULTS
@@ -122,19 +174,9 @@ VXWORKS_ADDITIONAL_CPP_SPEC
 
 #undef  ABI_STACK_BOUNDARY
 
-/* Make -mcpu=8540 imply SPE.  ISEL is automatically enabled, the
-   others must be done by hand.  Handle -mrtp.  Disable -fPIC
-   for -mrtp - the VxWorks PIC model is not compatible with it.  */
 #undef SUBSUBTARGET_OVERRIDE_OPTIONS
 #define SUBSUBTARGET_OVERRIDE_OPTIONS		\
-  do {						\
-    if (TARGET_E500)				\
-      {						\
-	rs6000_spe = 1;				\
-	rs6000_spe_abi = 1;			\
-	rs6000_float_gprs = 1;			\
-      }						\
-						\
+  do {                                          \
   if (!global_options_set.x_g_switch_value)	\
     g_switch_value = SDATA_DEFAULT_SIZE;	\
   VXWORKS_OVERRIDE_OPTIONS;			\
@@ -143,3 +185,16 @@ VXWORKS_ADDITIONAL_CPP_SPEC
 /* No _mcount profiling on VxWorks.  */
 #undef FUNCTION_PROFILER
 #define FUNCTION_PROFILER(FILE,LABELNO) VXWORKS_FUNCTION_PROFILER(FILE,LABELNO)
+
+/* Define this to be nonzero if static stack checking is supported.  */
+#define STACK_CHECK_STATIC_BUILTIN 1
+
+/* This platform supports the probing method of stack checking (RTP mode)
+   and the ZCX mechanism. 8K is reserved in the stack to propagate
+   exceptions reliably in case of stack overflow. */
+#define STACK_CHECK_PROTECT 8192
+
+/* Set the function to change the names of the division and modulus
+   functions.   */
+#undef TARGET_INIT_LIBFUNCS
+#define TARGET_INIT_LIBFUNCS rs6000_vxworks_init_libfuncs

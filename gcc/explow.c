@@ -1500,11 +1500,24 @@ allocate_dynamic_stack_space (rtx size, unsigned size_align,
   return target;
 }
 
-/* A front end may want to override GCC's stack checking by providing a
-   run-time routine to call to check the stack, so provide a mechanism for
-   calling that routine.  */
+/* A front end may want to override GCC's stack checking by providing
+   either a symbol (data) or a function (code).  In either case, the
+   runtime also needs to provide the associated support.  */
+ 
+/* Variable whose value is checked against the future value of the stack
+   pointer.  Upon stack overflow, the generated code will raise a trap.  */
+rtx stack_check_symbol;
 
-static GTY(()) rtx stack_check_libfunc;
+/* Function that is passed the future value of the stack pointer.  Upon
+   stack overflow, it is responsible for raising the appropriate event.  */
+rtx stack_check_libfunc;
+
+void
+set_stack_check_symbol (const char *symbol_name)
+{
+  gcc_assert (stack_check_symbol == NULL_RTX);
+  stack_check_symbol = gen_rtx_SYMBOL_REF (Pmode, symbol_name);
+}
 
 void
 set_stack_check_libfunc (const char *libfunc_name)
@@ -1518,17 +1531,24 @@ set_stack_check_libfunc (const char *libfunc_name)
 void
 emit_stack_probe (rtx address)
 {
-  rtx memref = gen_rtx_MEM (word_mode, address);
-
-  MEM_VOLATILE_P (memref) = 1;
-
-  /* See if we have an insn to probe the stack.  */
-#ifdef HAVE_probe_stack
-  if (HAVE_probe_stack)
-    emit_insn (gen_probe_stack (memref));
+#ifdef HAVE_probe_stack_address
+  if (HAVE_probe_stack_address)
+    emit_insn (gen_probe_stack_address (address));
   else
 #endif
-    emit_move_insn (memref, const0_rtx);
+    {
+      rtx memref = gen_rtx_MEM (word_mode, address);
+
+      MEM_VOLATILE_P (memref) = 1;
+
+      /* See if we have an insn to probe the stack.  */
+#ifdef HAVE_probe_stack
+      if (HAVE_probe_stack)
+        emit_insn (gen_probe_stack (memref));
+      else
+#endif
+        emit_move_insn (memref, const0_rtx);
+    }
 }
 
 /* Probe a range of stack addresses from FIRST to FIRST+SIZE, inclusive.
@@ -1542,10 +1562,14 @@ emit_stack_probe (rtx address)
 #define STACK_GROW_OP MINUS
 #define STACK_GROW_OPTAB sub_optab
 #define STACK_GROW_OFF(off) -(off)
+#define STACK_HIGH(high,low) (low)
+#define STACK_LOW(high,low) (high)
 #else
 #define STACK_GROW_OP PLUS
 #define STACK_GROW_OPTAB add_optab
 #define STACK_GROW_OFF(off) (off)
+#define STACK_HIGH(high,low) (high)
+#define STACK_LOW(high,low) (low)
 #endif
 
 void
@@ -1562,8 +1586,36 @@ probe_stack_range (HOST_WIDE_INT first, rtx size)
 				 gen_rtx_fmt_ee (STACK_GROW_OP, Pmode,
 					         stack_pointer_rtx,
 					         plus_constant (size, first)));
-      emit_library_call (stack_check_libfunc, LCT_NORMAL, VOIDmode, 1, addr,
+      emit_library_call (stack_check_libfunc, LCT_THROW, VOIDmode, 1, addr,
 			 Pmode);
+    }
+
+  /* Next see if we have a symbol to compare the lower stack address with.  */
+  else if (stack_check_symbol)
+    {
+#ifdef HAVE_trap
+      rtx stack_check_limit = gen_rtx_MEM (Pmode, stack_check_symbol);
+      rtx avail
+	= expand_binop (Pmode, sub_optab,
+			STACK_HIGH (stack_check_limit, stack_pointer_rtx),
+			STACK_LOW (stack_check_limit, stack_pointer_rtx),
+			NULL_RTX, 1, OPTAB_WIDEN);
+      rtx req = plus_constant (size, first);
+      rtx seq = gen_cond_trap (LTU, avail, req, const0_rtx);
+
+      if (seq)
+	emit_insn (seq);
+      else
+	{
+	  rtx ok_lb = gen_label_rtx ();
+	  emit_cmp_and_jump_insns (avail, req, GEU, NULL_RTX, Pmode, 1, ok_lb);
+	  emit_insn (gen_trap ());
+	  emit_barrier ();
+	  emit_label (ok_lb);
+	}
+#else
+      error ("stack checking not supported on this target");
+#endif
     }
 
   /* Next see if we have an insn to check the stack.  */
@@ -1917,5 +1969,3 @@ rtx_to_tree_code (enum rtx_code code)
     }
   return ((int) tcode);
 }
-
-#include "gt-explow.h"

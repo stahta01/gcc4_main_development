@@ -54,7 +54,7 @@
 #define REGISTER_NAMES				   \
 {				                   \
   "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7",  \
-  "r8", "r9", "sl", "fp", "ip", "sp", "lr", "pc",  \
+  "r8", "r9", "r10","fp", "ip", "sp", "lr", "pc",  \
   "f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7",  \
   "cc", "sfp", "afp",		   		   \
   "mv0",   "mv1",   "mv2",   "mv3",		   \

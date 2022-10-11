@@ -512,13 +512,6 @@
   operands[4] = GEN_INT (low);
   if (satisfies_constraint_L (rest_rtx))
     operands[3] = rest_rtx;
-  else if (can_create_pseudo_p ())
-    {
-      operands[3] = gen_reg_rtx (DImode);
-      emit_move_insn (operands[3], operands[2]);
-      emit_insn (gen_adddi3 (operands[0], operands[1], operands[3]));
-      DONE;
-    }
   else
     FAIL;
 })
@@ -4526,7 +4519,7 @@
 (define_split
   [(set (match_operand:SI 0 "register_operand" "")
 	(match_operand:SI 1 "non_add_const_operand" ""))]
-  ""
+  "reload_completed"
   [(const_int 0)]
 {
   if (alpha_split_const_mov (SImode, operands))
@@ -4726,7 +4719,7 @@
 (define_split
   [(set (match_operand:DI 0 "register_operand" "")
 	(match_operand:DI 1 "non_add_const_operand" ""))]
-  ""
+  "reload_completed"
   [(const_int 0)]
 {
   if (alpha_split_const_mov (DImode, operands))
@@ -5165,7 +5158,7 @@
 (define_split
   [(set (match_operand:VEC 0 "register_operand" "")
 	(match_operand:VEC 1 "non_zero_const_operand" ""))]
-  ""
+  "reload_completed"
   [(const_int 0)]
 {
   if (alpha_split_const_mov (<MODE>mode, operands))

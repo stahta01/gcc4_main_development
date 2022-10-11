@@ -390,7 +390,7 @@ extern const unsigned int num_c_common_reswords;
 #define int32_type_node			c_global_trees[CTI_INT32_TYPE]
 #define int64_type_node			c_global_trees[CTI_INT64_TYPE]
 #define uint8_type_node			c_global_trees[CTI_UINT8_TYPE]
-#define uint16_type_node		c_global_trees[CTI_UINT16_TYPE]
+#define c_uint16_type_node		c_global_trees[CTI_UINT16_TYPE]
 #define c_uint32_type_node		c_global_trees[CTI_UINT32_TYPE]
 #define c_uint64_type_node		c_global_trees[CTI_UINT64_TYPE]
 #define int_least8_type_node		c_global_trees[CTI_INT_LEAST8_TYPE]
@@ -877,6 +877,9 @@ extern tree build_real_imag_expr (location_t, enum tree_code, tree);
    a variant of the C language.  They are used in c-common.c.  */
 
 extern tree build_unary_op (location_t, enum tree_code, tree, int);
+extern tree build_binary_op_with_locs (location_t, enum tree_code,
+				       tree, location_t,
+				       tree, location_t, int);
 extern tree build_binary_op (location_t, enum tree_code, tree, tree, int);
 extern tree perform_integral_promotions (tree);
 

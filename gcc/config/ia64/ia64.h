@@ -1722,4 +1722,7 @@ struct GTY(()) machine_function
 /* Switch on code for querying unit reservations.  */
 #define CPU_UNITS_QUERY 1
 
+/* IA-64 already uses descriptors for its standard calling sequence.  */
+#define USE_RUNTIME_DESCRIPTORS 0
+
 /* End of ia64.h */

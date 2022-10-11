@@ -69,8 +69,8 @@ DEF_VEC_ALLOC_P(edge,heap);
 #define EDGE_FALLTHRU		0x0001	/* 'Straight line' flow */
 #define EDGE_ABNORMAL		0x0002	/* Strange flow, like computed
 					   label, or eh */
-#define EDGE_ABNORMAL_CALL	0x0004	/* Call with abnormal exit
-					   like an exception, or sibcall */
+#define EDGE_ABNORMAL_CALL	0x0004	/* Call with abnormal exit, like an
+					   exception or a non-local goto.  */
 #define EDGE_EH			0x0008	/* Exception throw */
 #define EDGE_FAKE		0x0010	/* Not a real edge (profile.c) */
 #define EDGE_DFS_BACK		0x0020	/* A backwards edge */
@@ -89,7 +89,14 @@ DEF_VEC_ALLOC_P(edge,heap);
 					   and cold sections, when we
 					   do partitioning.  */
 #define EDGE_PRESERVE		0x4000	/* Never merge blocks via this edge. */
-#define EDGE_ALL_FLAGS		0x7fff
+
+#define EDGE_LOOP_NO_UNROLL	0x10000	/* Do not unroll loop edge.  */
+#define EDGE_LOOP_UNROLL	0x20000	/* Unroll loop edge.  */
+#define EDGE_LOOP_NO_VECTOR	0x40000	/* Do not vectorize loop edge.  */
+#define EDGE_LOOP_VECTOR	0x80000	/* Vectorize loop edge.  */
+#define EDGE_LOOP_HINTS		0xf0000
+
+#define EDGE_ALL_FLAGS		0xfffff
 
 #define EDGE_COMPLEX \
   (EDGE_ABNORMAL | EDGE_ABNORMAL_CALL | EDGE_EH | EDGE_PRESERVE)
@@ -808,6 +815,7 @@ extern void flow_edge_list_print (const char *, const edge *, int, FILE *);
 /* In cfgrtl.c  */
 extern rtx block_label (basic_block);
 extern rtx bb_note (basic_block);
+extern bool unique_locus_on_edge_between_p (basic_block, basic_block, bool);
 extern bool purge_all_dead_edges (void);
 extern bool purge_dead_edges (basic_block);
 extern bool fixup_abnormal_edges (void);

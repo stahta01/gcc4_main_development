@@ -41,6 +41,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "bitmap.h"
 #include "gimple.h"
 #include "c-family/c-objc.h"
+#include "c-family/c-xref.h"
 
 /* Possible cases of implicit bad conversions.  Used to select
    diagnostic messages in convert_for_assignment.  */
@@ -2511,14 +2512,19 @@ build_external_ref (location_t loc, tree id, int fun, tree *type)
     {
       used_types_insert (TREE_TYPE (ref));
 
-      if (warn_cxx_compat
-	  && TREE_CODE (TREE_TYPE (ref)) == ENUMERAL_TYPE
-	  && C_TYPE_DEFINED_IN_STRUCT (TREE_TYPE (ref)))
+      if (TREE_CODE (TREE_TYPE (ref)) == ENUMERAL_TYPE)
 	{
-	  warning_at (loc, OPT_Wc___compat,
-		      ("enum constant defined in struct or union "
-		       "is not visible in C++"));
-	  inform (DECL_SOURCE_LOCATION (ref), "enum constant defined here");
+	  generate_enum_reference (ref, loc, 'r');
+
+	  if (warn_cxx_compat
+	      && C_TYPE_DEFINED_IN_STRUCT (TREE_TYPE (ref)))
+	    {
+	      warning_at (loc, OPT_Wc___compat,
+			  ("enum constant defined in struct or union "
+			  "is not visible in C++"));
+	      inform (DECL_SOURCE_LOCATION (ref),
+		      "enum constant defined here");
+	    }
 	}
 
       ref = DECL_INITIAL (ref);
@@ -3318,11 +3324,13 @@ parser_build_unary_op (location_t loc, enum tree_code code, struct c_expr arg)
    expression, we check for operands that were written with other binary
    operators in a way that is likely to confuse the user.
 
-   LOCATION is the location of the binary operator.  */
+   LOCATION is the location of the binary operator, and LOC1 and LOC2
+   are the locations of its two operands.  */
 
 struct c_expr
 parser_build_binary_op (location_t location, enum tree_code code,
-			struct c_expr arg1, struct c_expr arg2)
+			struct c_expr arg1, location_t loc1,
+			struct c_expr arg2, location_t loc2)
 {
   struct c_expr result;
 
@@ -3335,8 +3343,9 @@ parser_build_binary_op (location_t location, enum tree_code code,
                 ? arg2.original_type
                 : TREE_TYPE (arg2.value));
 
-  result.value = build_binary_op (location, code,
-				  arg1.value, arg2.value, 1);
+  result.value = build_binary_op_with_locs (location, code,
+					    arg1.value, loc1,
+					    arg2.value, loc2, 1);
   result.original_code = code;
   result.original_type = NULL;
 
@@ -8723,11 +8732,13 @@ c_finish_goto_ptr (location_t loc, tree expr)
 
 /* Generate a C `return' statement.  RETVAL is the expression for what
    to return, or a null pointer for `return;' with no value.  LOC is
-   the location of the return statement.  If ORIGTYPE is not NULL_TREE, it
+   the location of the return statement.  LOC_EXPR is the location of the
+   return expression, if any.  If ORIGTYPE is not NULL_TREE, it
    is the original type of RETVAL.  */
 
 tree
-c_finish_return (location_t loc, tree retval, tree origtype)
+c_finish_return (location_t loc, location_t loc_expr, tree retval,
+		 tree origtype)
 {
   tree valtype = TREE_TYPE (TREE_TYPE (current_function_decl)), ret_stmt;
   bool no_warning = false;
@@ -8849,6 +8860,12 @@ c_finish_return (location_t loc, tree retval, tree origtype)
 
       retval = build2 (MODIFY_EXPR, TREE_TYPE (res), res, t);
       SET_EXPR_LOCATION (retval, loc);
+      {
+	location_t locs[2];
+	locs[0] = loc;
+	locs[1] = loc_expr;
+	SET_EXPR_LOCATIONS (retval, locs, 2);
+      }
 
       if (warn_sequence_point)
 	verify_sequence_points (retval);
@@ -9550,6 +9567,8 @@ scalar_to_vector (location_t loc, enum tree_code code, tree op0, tree op1)
 /* Build a binary-operation expression without default conversions.
    CODE is the kind of expression to build.
    LOCATION is the operator's location.
+   ORIG_OP0 and ORIG_OP1 are the two operands.
+   OP0_LOC and OP1_LOC are the operands locations.
    This function differs from `build' in several ways:
    the data type of the result is computed and recorded in it,
    warnings are generated if arg data types are invalid,
@@ -9564,8 +9583,9 @@ scalar_to_vector (location_t loc, enum tree_code code, tree op0, tree op1)
    the arithmetic is to be done.  */
 
 tree
-build_binary_op (location_t location, enum tree_code code,
-		 tree orig_op0, tree orig_op1, int convert_p)
+build_binary_op_with_locs (location_t location, enum tree_code code,
+			   tree orig_op0, location_t op0_loc,
+			   tree orig_op1, location_t op1_loc, int convert_p)
 {
   tree type0, type1, orig_type0, orig_type1;
   tree eptype;
@@ -9907,18 +9927,18 @@ build_binary_op (location_t location, enum tree_code code,
 	  result_type = integer_type_node;
 	  if (op0_int_operands)
 	    {
-	      op0 = c_objc_common_truthvalue_conversion (location, orig_op0);
+	      op0 = c_objc_common_truthvalue_conversion (op0_loc, orig_op0);
 	      op0 = remove_c_maybe_const_expr (op0);
 	    }
 	  else
-	    op0 = c_objc_common_truthvalue_conversion (location, op0);
+	    op0 = c_objc_common_truthvalue_conversion (op0_loc, op0);
 	  if (op1_int_operands)
 	    {
-	      op1 = c_objc_common_truthvalue_conversion (location, orig_op1);
+	      op1 = c_objc_common_truthvalue_conversion (op1_loc, orig_op1);
 	      op1 = remove_c_maybe_const_expr (op1);
 	    }
 	  else
-	    op1 = c_objc_common_truthvalue_conversion (location, op1);
+	    op1 = c_objc_common_truthvalue_conversion (op1_loc, op1);
 	  converted = 1;
 	  boolean_op = true;
 	}
@@ -10588,6 +10608,17 @@ build_binary_op (location_t location, enum tree_code code,
     ret = build1 (EXCESS_PRECISION_EXPR, semantic_result_type, ret);
   protected_set_expr_location (ret, location);
   return ret;
+}
+
+/* Likewise, but use operator LOCATION for operands.  */
+
+tree
+build_binary_op (location_t location, enum tree_code code,
+		 tree orig_op0, tree orig_op1, int convert_p)
+{
+  return build_binary_op_with_locs (location, code,
+				    orig_op0, location,
+				    orig_op1, location, convert_p);
 }
 
 

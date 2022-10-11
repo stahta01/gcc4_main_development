@@ -359,6 +359,7 @@ extr_type_from_vtbl_ptr_store (gimple stmt, struct type_change_info *tci)
 {
   HOST_WIDE_INT offset, size, max_size;
   tree lhs, rhs, base;
+  bool reverse;
 
   if (!gimple_assign_single_p (stmt))
     return NULL_TREE;
@@ -375,7 +376,7 @@ extr_type_from_vtbl_ptr_store (gimple stmt, struct type_change_info *tci)
       || !DECL_VIRTUAL_P (rhs))
     return NULL_TREE;
 
-  base = get_ref_base_and_extent (lhs, &offset, &size, &max_size);
+  base = get_ref_base_and_extent (lhs, &offset, &size, &max_size, &reverse);
   if (offset != tci->offset
       || size != POINTER_SIZE
       || max_size != POINTER_SIZE)
@@ -635,6 +636,7 @@ compute_complex_assign_jump_func (struct ipa_node_params *info,
 {
   HOST_WIDE_INT offset, size, max_size;
   tree op1, tc_ssa, base, ssa;
+  bool reverse;
   int index;
 
   op1 = gimple_assign_rhs1 (stmt);
@@ -686,7 +688,7 @@ compute_complex_assign_jump_func (struct ipa_node_params *info,
   op1 = TREE_OPERAND (op1, 0);
   if (TREE_CODE (TREE_TYPE (op1)) != RECORD_TYPE)
     return;
-  base = get_ref_base_and_extent (op1, &offset, &size, &max_size);
+  base = get_ref_base_and_extent (op1, &offset, &size, &max_size, &reverse);
   if (TREE_CODE (base) != MEM_REF
       /* If this is a varying address, punt.  */
       || max_size == -1
@@ -727,6 +729,7 @@ get_ancestor_addr_info (gimple assign, tree *obj_p, HOST_WIDE_INT *offset)
 {
   HOST_WIDE_INT size, max_size;
   tree expr, parm, obj;
+  bool reverse;
 
   if (!gimple_assign_single_p (assign))
     return NULL_TREE;
@@ -736,7 +739,7 @@ get_ancestor_addr_info (gimple assign, tree *obj_p, HOST_WIDE_INT *offset)
     return NULL_TREE;
   expr = TREE_OPERAND (expr, 0);
   obj = expr;
-  expr = get_ref_base_and_extent (expr, offset, &size, &max_size);
+  expr = get_ref_base_and_extent (expr, offset, &size, &max_size, &reverse);
 
   if (TREE_CODE (expr) != MEM_REF
       /* If this is a varying address, punt.  */
@@ -850,6 +853,7 @@ compute_known_type_jump_func (tree op, struct ipa_jump_func *jfunc,
 			      gimple call)
 {
   HOST_WIDE_INT offset, size, max_size;
+  bool reverse;
   tree base;
 
   if (!flag_devirtualize
@@ -858,7 +862,7 @@ compute_known_type_jump_func (tree op, struct ipa_jump_func *jfunc,
     return;
 
   op = TREE_OPERAND (op, 0);
-  base = get_ref_base_and_extent (op, &offset, &size, &max_size);
+  base = get_ref_base_and_extent (op, &offset, &size, &max_size, &reverse);
   if (!DECL_P (base)
       || max_size == -1
       || max_size != size
@@ -2524,10 +2528,12 @@ ipa_modify_call_arguments (struct cgraph_edge *cs, gimple stmt,
 	      if (align < TYPE_ALIGN (type))
 		type = build_aligned_type (type, align);
 	      expr = fold_build2_loc (loc, MEM_REF, type, base, off);
+	      REF_REVERSE_STORAGE_ORDER (expr) = adj->reverse;
 	    }
 	  else
 	    {
 	      expr = fold_build2_loc (loc, MEM_REF, adj->type, base, off);
+	      REF_REVERSE_STORAGE_ORDER (expr) = adj->reverse;
 	      expr = build_fold_addr_expr (expr);
 	    }
 

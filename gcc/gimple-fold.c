@@ -222,13 +222,13 @@ maybe_fold_reference (tree expr, bool is_lhs)
   if (TREE_CODE (*t) == MEM_REF
       && !is_gimple_mem_ref_addr (TREE_OPERAND (*t, 0)))
     {
-      bool volatile_p = TREE_THIS_VOLATILE (*t);
       tree tem = fold_binary (MEM_REF, TREE_TYPE (*t),
 			      TREE_OPERAND (*t, 0),
 			      TREE_OPERAND (*t, 1));
       if (tem)
 	{
-	  TREE_THIS_VOLATILE (tem) = volatile_p;
+	  TREE_THIS_VOLATILE (tem) = TREE_THIS_VOLATILE (*t);
+	  REF_REVERSE_STORAGE_ORDER (tem) = REF_REVERSE_STORAGE_ORDER (*t);
 	  *t = tem;
 	  tem = maybe_fold_reference (expr, is_lhs);
 	  if (tem)
@@ -1014,7 +1014,7 @@ gimple_extract_devirt_binfo_from_cst (tree cst)
 {
   HOST_WIDE_INT offset, size, max_size;
   tree base, type, expected_type, binfo;
-  bool last_artificial = false;
+  bool last_artificial = false, reverse;
 
   if (!flag_devirtualize
       || TREE_CODE (cst) != ADDR_EXPR
@@ -1023,7 +1023,7 @@ gimple_extract_devirt_binfo_from_cst (tree cst)
 
   cst = TREE_OPERAND (cst, 0);
   expected_type = TREE_TYPE (cst);
-  base = get_ref_base_and_extent (cst, &offset, &size, &max_size);
+  base = get_ref_base_and_extent (cst, &offset, &size, &max_size, &reverse);
   type = TREE_TYPE (base);
   if (!DECL_P (base)
       || max_size == -1
@@ -2677,6 +2677,8 @@ get_base_constructor (tree base, HOST_WIDE_INT *bit_offset,
 		      tree (*valueize)(tree))
 {
   HOST_WIDE_INT bit_offset2, size, max_size;
+  bool reverse;
+
   if (TREE_CODE (base) == MEM_REF)
     {
       if (!integer_zerop (TREE_OPERAND (base, 1)))
@@ -2718,7 +2720,8 @@ get_base_constructor (tree base, HOST_WIDE_INT *bit_offset,
 
     case ARRAY_REF:
     case COMPONENT_REF:
-      base = get_ref_base_and_extent (base, &bit_offset2, &size, &max_size);
+      base = get_ref_base_and_extent (base, &bit_offset2, &size, &max_size,
+				      &reverse);
       if (max_size == -1 || size != max_size)
 	return NULL_TREE;
       *bit_offset +=  bit_offset2;
@@ -2973,6 +2976,7 @@ fold_const_aggregate_ref_1 (tree t, tree (*valueize) (tree))
   tree ctor, idx, base;
   HOST_WIDE_INT offset, size, max_size;
   tree tem;
+  bool reverse;
 
   if (TREE_THIS_VOLATILE (t))
     return NULL_TREE;
@@ -2996,18 +3000,23 @@ fold_const_aggregate_ref_1 (tree t, tree (*valueize) (tree))
       if (TREE_CODE (TREE_OPERAND (t, 1)) == SSA_NAME
 	  && valueize
 	  && (idx = (*valueize) (TREE_OPERAND (t, 1)))
-	  && host_integerp (idx, 0))
+	  && TREE_CODE (idx) == INTEGER_CST)
 	{
 	  tree low_bound, unit_size;
+	  double_int doffset;
 
 	  /* If the resulting bit-offset is constant, track it.  */
 	  if ((low_bound = array_ref_low_bound (t),
-	       host_integerp (low_bound, 0))
+	       TREE_CODE (low_bound) == INTEGER_CST)
 	      && (unit_size = array_ref_element_size (t),
-		  host_integerp (unit_size, 1)))
+		  host_integerp (unit_size, 1))
+	      && (doffset = double_int_sext
+			    (double_int_sub (TREE_INT_CST (idx),
+					     TREE_INT_CST (low_bound)),
+			     TYPE_PRECISION (TREE_TYPE (idx))),
+		  double_int_fits_in_shwi_p (doffset)))
 	    {
-	      offset = TREE_INT_CST_LOW (idx);
-	      offset -= TREE_INT_CST_LOW (low_bound);
+	      offset = double_int_to_shwi (doffset);
 	      offset *= TREE_INT_CST_LOW (unit_size);
 	      offset *= BITS_PER_UNIT;
 
@@ -3034,7 +3043,7 @@ fold_const_aggregate_ref_1 (tree t, tree (*valueize) (tree))
     case BIT_FIELD_REF:
     case TARGET_MEM_REF:
     case MEM_REF:
-      base = get_ref_base_and_extent (t, &offset, &size, &max_size);
+      base = get_ref_base_and_extent (t, &offset, &size, &max_size, &reverse);
       ctor = get_base_constructor (base, &offset, valueize);
 
       /* Empty constructor.  Always fold to 0.  */

@@ -1,5 +1,6 @@
 @c Copyright (C) 1988, 1989, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999,
-@c 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012
+@c 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011,
+@c 2012, 2013
 @c Free Software Foundation, Inc.
 @c This is part of the GCC manual.
 @c For copying conditions, see the file gcc.texi.
@@ -166,7 +167,7 @@ in the following sections.
 -pipe  -pass-exit-codes  @gol
 -x @var{language}  -v  -###  --help@r{[}=@var{class}@r{[},@dots{}@r{]]}  --target-help  @gol
 --version -wrapper @@@var{file} -fplugin=@var{file} -fplugin-arg-@var{name}=@var{arg}  @gol
--fdump-ada-spec@r{[}-slim@r{]} -fdump-go-spec=@var{file}}
+-fdump-ada-spec@r{[}-slim@r{]} -fada-spec-parent=@var{unit} -fdump-go-spec=@var{file}}
 
 @item C Language Options
 @xref{C Dialect Options,,Options Controlling C Dialect}.
@@ -297,6 +298,7 @@ Objective-C and Objective-C++ Dialects}.
 -fdump-class-hierarchy@r{[}-@var{n}@r{]} @gol
 -fdump-ipa-all -fdump-ipa-cgraph -fdump-ipa-inline @gol
 -fdump-passes @gol
+-fdump-scos @gol
 -fdump-statistics @gol
 -fdump-tree-all @gol
 -fdump-tree-original@r{[}-@var{n}@r{]}  @gol
@@ -326,7 +328,7 @@ Objective-C and Objective-C++ Dialects}.
 -feliminate-unused-debug-symbols -femit-class-debug-always @gol
 -fenable-@var{kind}-@var{pass} @gol
 -fenable-@var{kind}-@var{pass}=@var{range-list} @gol
--fdebug-types-section @gol
+-fcallgraph-info@r{[}=su,da@r{]} -fdebug-types-section @gol
 -fmem-report -fpre-ipa-mem-report -fpost-ipa-mem-report -fprofile-arcs @gol
 -frandom-seed=@var{string} -fsched-verbose=@var{n} @gol
 -fsel-sched-verbose -fsel-sched-dump-cfg -fsel-sched-pipelining-verbose @gol
@@ -668,7 +670,8 @@ Objective-C and Objective-C++ Dialects}.
 -msched-prefer-non-data-spec-insns -msched-prefer-non-control-spec-insns @gol
 -msched-stop-bits-after-every-cycle -msched-count-spec-in-critical-path @gol
 -msel-sched-dont-check-control-spec -msched-fp-mem-deps-zero-cost @gol
--msched-max-memory-insns-hard-limit -msched-max-memory-insns=@var{max-insns}}
+-msched-max-memory-insns-hard-limit -msched-max-memory-insns=@var{max-insns}
+-mlongcall}
 
 @emph{IA-64/VMS Options}
 @gccoptlist{-mvms-return-codes -mdebug-main=@var{prefix} -mmalloc64}
@@ -676,6 +679,10 @@ Objective-C and Objective-C++ Dialects}.
 @emph{LM32 Options}
 @gccoptlist{-mbarrel-shift-enabled -mdivide-enabled -mmultiply-enabled @gol
 -msign-extend-enabled -muser-enabled}
+
+@emph{LMP Options}
+@gccoptlist{-mdebug -msim -mfpu -mno-fpu -mhard-float -msoft-float @gol
+-mcpu=@var{cpu-type} -mtune=@var{cpu-type} -msv-mode -muser-mode}
 
 @emph{M32R/D Options}
 @gccoptlist{-m32r2 -m32rx -m32r @gol
@@ -908,7 +915,7 @@ See RS/6000 and PowerPC Options.
 -mv8plus  -mno-v8plus  -mvis  -mno-vis @gol
 -mvis2  -mno-vis2  -mvis3  -mno-vis3 @gol
 -mfmaf  -mno-fmaf  -mpopc  -mno-popc @gol
--mfix-at697f}
+-mfix-at697f -mfix-ut699}
 
 @emph{SPU Options}
 @gccoptlist{-mwarn-reloc -merror-reloc @gol
@@ -971,7 +978,7 @@ See S/390 and zSeries Options.
 @xref{Code Gen Options,,Options for Code Generation Conventions}.
 @gccoptlist{-fcall-saved-@var{reg}  -fcall-used-@var{reg} @gol
 -ffixed-@var{reg}  -fexceptions @gol
--fnon-call-exceptions  -funwind-tables @gol
+-fnon-call-exceptions  -fdelete-dead-exceptions  -funwind-tables @gol
 -fasynchronous-unwind-tables @gol
 -finhibit-size-directive  -finstrument-functions @gol
 -finstrument-functions-exclude-function-list=@var{sym},@var{sym},@dots{} @gol
@@ -986,7 +993,7 @@ See S/390 and zSeries Options.
 -fstack-limit-register=@var{reg}  -fstack-limit-symbol=@var{sym} @gol
 -fno-stack-limit -fsplit-stack @gol
 -fleading-underscore  -ftls-model=@var{model} @gol
--ftrapv  -fwrapv  -fbounds-check @gol
+-ftrampolines -ftrapv  -fwrapv  -fbounds-check @gol
 -fvisibility -fstrict-volatile-bitfields}
 @end table
 
@@ -1115,6 +1122,9 @@ traditional preprocessor).
 
 @item @var{file}.go
 Go source code.
+
+@item @var{file}.idl
+OMG IDL file which must be preprocessed in CXX98 mode.
 
 @c FIXME: Descriptions of Java file types.
 @c @var{file}.java
@@ -1433,6 +1443,11 @@ for the plugin called @var{name}.
 For C and C++ source and include files, generate corresponding Ada specs.
 @xref{Generating Ada Bindings for C and C++ headers,,, gnat_ugn,
 GNAT User's Guide}, which provides detailed documentation on this feature.
+
+@item -fada-spec-parent=@var{unit}
+@opindex fada-spec-parent
+In conjunction with @option{-fdump-ada-spec@r{[}-slim@r{]}} above, generate
+Ada specs as child units of parent @var{unit}.
 
 @item -fdump-go-spec=@var{file}
 @opindex fdump-go-spec
@@ -5088,6 +5103,18 @@ the function.  If it is not present, the amount of these adjustments is
 not bounded at compile time and the second field only represents the
 bounded part.
 
+@item -fcallgraph-info
+@itemx -fcallgraph-info=@var{MARKERS}
+@opindex fcallgraph-info
+Makes the compiler output callgraph information for the program, on a
+per-file basis.  The information is generated in the common VCG format.
+It can be decorated with additional, per-node and/or per-edge information,
+if a list of comma-separated markers is additionally specified.  When the
+@code{su} marker is specified, the callgraph is decorated with stack usage
+information; it is equivalent to @option{-fstack-usage}.  When the @code{da}
+marker is specified, the callgraph is decorated with information about
+dynamically allocated objects.
+
 @item -fprofile-arcs
 @opindex fprofile-arcs
 Add code so that program flow @dfn{arcs} are instrumented.  During
@@ -5632,6 +5659,11 @@ Dump after function inlining.
 @opindex fdump-passes
 Dump the list of optimization passes that are turned on and off by
 the current command-line options.
+
+@item -fdump-scos
+@opindex fdump-scos
+Dump Source Coverage Obligation information to a separate file. The name
+of that file is formed by appending @samp{.gli} to the source file name.
 
 @item -fdump-statistics-@var{option}
 @opindex fdump-statistics
@@ -6182,7 +6214,6 @@ compilation time.
 -ftree-ccp @gol
 -ftree-ch @gol
 -ftree-copyrename @gol
--ftree-dce @gol
 -ftree-dominator-opts @gol
 -ftree-dse @gol
 -ftree-forwprop @gol
@@ -7150,8 +7181,7 @@ be limited using @option{max-tail-merge-comparisons} parameter and
 
 @item -ftree-dce
 @opindex ftree-dce
-Perform dead code elimination (DCE) on trees.  This flag is enabled by
-default at @option{-O} and higher.
+Perform dead code elimination (DCE) on trees.  This flag is enabled by default.
 
 @item -ftree-builtin-call-dce
 @opindex ftree-builtin-call-dce
@@ -8100,6 +8130,14 @@ code.
 
 If @var{path} is specified, GCC will look at the @var{path} to find
 the profile feedback data files. See @option{-fprofile-dir}.
+
+@item -fpreserve-control-flow
+@opindex fpreserve-control-flow
+Preserve the source-level expressed control flow down to assembly code.
+This typically disables a number of expression folding or phi-node
+optimizations as well as passes like if-conversion, which is useful to
+help inferring source-level condition/decision coverage from object-level
+instruction and branch coverage.  This is not enabled by default.
 @end table
 
 The following options control compiler behavior regarding floating-point 
@@ -9120,6 +9158,14 @@ Maximum size of a strongly connected component (SCC) during SCCVN
 processing.  If this limit is hit, SCCVN processing for the whole
 function will not be done and optimizations depending on it will
 be disabled.  The default maximum SCC size is 10000.
+
+@item sccvn-max-alias-queries-per-access
+Maximum number of alias-oracle queries we perform when looking for
+redundancies for loads and stores.  If this limit is hit the search
+is aborted and the load or store is not considered redundant.  The
+number of queries is algorithmically limited to the number of
+stores on all paths from the load to the function entry.
+The default maxmimum number of queries is 1000.
 
 @item ira-max-loops-num
 IRA uses regional register allocation by default.  If a function
@@ -10351,6 +10397,7 @@ platform.
 * IA-64 Options::
 * IA-64/VMS Options::
 * LM32 Options::
+* LMP Options::
 * M32C Options::
 * M32R/D Options::
 * M680x0 Options::
@@ -14329,6 +14376,13 @@ Disallow more than `msched-max-memory-insns' in instruction group.
 Otherwise, limit is `soft' meaning that we would prefer non-memory operations
 when limit is reached but may still schedule memory operations.
 
+@item -mlongcall
+@opindex mlongcall
+Generate long branch (brl.call) instructions to call symbolic functions
+instead of default normal branch (br.call) instructions.  This expands the
+valid field of relative address displacement of called functions from 2^21
+bundles to 2^60 bundles at the expense of code size and efficiency.
+
 @end table
 
 @node IA-64/VMS Options
@@ -14379,6 +14433,77 @@ Enable sign extend instructions.
 @opindex muser-enabled
 Enable user-defined instructions.
 
+@end table
+
+@node LMP Options
+@subsection LMP Options
+@cindex LMP options
+
+@table @gcctabopt
+
+@item -mdebug
+@opindex mdebug
+A program which performs file I/O and is destined to run on an MCM target
+should be linked with this option.  It causes the libraries libc.a and
+libdebug.a to be linked.  The program should be run on the target under
+the control of the GDB remote debugging stub.
+
+@item -msim
+@opindex msim
+A program which performs file I/O and is destined to run on the simulator
+should be linked with option.  This causes libraries libc.a and libsim.a to
+be linked.
+
+@item -mfpu
+@itemx -mhard-float
+@opindex mfpu
+@opindex mhard-float
+Generate code containing floating-point instructions.  This is the
+default.
+
+@item -mno-fpu
+@itemx -msoft-float
+@opindex mno-fpu
+@opindex msoft-float
+Generate code containing library calls for floating-point.
+
+@option{-msoft-float} changes the calling convention in the output file;
+therefore, it is only useful if you compile @emph{all} of a program with
+this option.  In particular, you need to compile @file{libgcc.a}, the
+library that comes with GCC, with @option{-msoft-float} in order for
+this to work.
+
+@item -mcpu=@var{cpu_type}
+@opindex mcpu
+Set the instruction set, register set, and instruction scheduling parameters
+for machine type @var{cpu_type}.  Supported values for @var{cpu_type} are
+@samp{mcm}, @samp{gr5} and @samp{gr6}.
+
+@samp{mcm} is a synonym of @samp{gr5} present for backward compatibility.
+
+By default (unless configured otherwise), GCC generates code for the GR5
+variant of the LMP architecture.  
+
+With @option{-mcpu=gr6}, GCC generates code for the GR6 variant of the LMP
+architecture.  The only difference from GR5 code is that the compiler will
+generate block move instructions.
+
+@item -mtune=@var{cpu_type}
+@opindex mtune
+Set the instruction scheduling parameters for machine type @var{cpu_type},
+but do not set the instruction set or register set that the option
+@option{-mcpu=@var{cpu_type}} would.
+
+@item -msv-mode
+@opindex msv-mode
+Generate code for the supervisor mode, where there are no restrictions on
+the access to general registers.  This is the default.
+
+@item -muser-mode
+@opindex muser-mode
+Generate code for the user mode, where the access to some general registers
+is forbidden: on the GR5, registers r24 to r31 cannot be accessed in this
+mode; on the GR6, only registers r29 to r31 are affected.
 @end table
 
 @node M32C Options
@@ -18403,10 +18528,10 @@ the rules of the ABI@.
 Set the instruction set, register set, and instruction scheduling parameters
 for machine type @var{cpu_type}.  Supported values for @var{cpu_type} are
 @samp{v7}, @samp{cypress}, @samp{v8}, @samp{supersparc}, @samp{hypersparc},
-@samp{leon}, @samp{sparclite}, @samp{f930}, @samp{f934}, @samp{sparclite86x},
-@samp{sparclet}, @samp{tsc701}, @samp{v9}, @samp{ultrasparc},
-@samp{ultrasparc3}, @samp{niagara}, @samp{niagara2}, @samp{niagara3},
-and @samp{niagara4}.
+@samp{leon}, @samp{leon3}, @samp{sparclite}, @samp{f930}, @samp{f934},
+@samp{sparclite86x}, @samp{sparclet}, @samp{tsc701}, @samp{v9},
+@samp{ultrasparc}, @samp{ultrasparc3}, @samp{niagara}, @samp{niagara2},
+@samp{niagara3} and @samp{niagara4}.
 
 Native Solaris and GNU/Linux toolchains also support the value @samp{native},
 which selects the best architecture option for the host processor.
@@ -18425,7 +18550,7 @@ implementations.
 cypress
 
 @item v8
-supersparc, hypersparc, leon
+supersparc, hypersparc, leon, leon3
 
 @item sparclite
 f930, f934, sparclite86x
@@ -18487,10 +18612,11 @@ option @option{-mcpu=@var{cpu_type}} would.
 The same values for @option{-mcpu=@var{cpu_type}} can be used for
 @option{-mtune=@var{cpu_type}}, but the only useful values are those
 that select a particular CPU implementation.  Those are @samp{cypress},
-@samp{supersparc}, @samp{hypersparc}, @samp{leon}, @samp{f930}, @samp{f934},
-@samp{sparclite86x}, @samp{tsc701}, @samp{ultrasparc}, @samp{ultrasparc3},
-@samp{niagara}, @samp{niagara2}, @samp{niagara3} and @samp{niagara4}.  With
-native Solaris and GNU/Linux toolchains, @samp{native} can also be used.
+@samp{supersparc}, @samp{hypersparc}, @samp{leon}, @samp{leon3}, @samp{f930},
+@samp{f934}, @samp{sparclite86x}, @samp{tsc701}, @samp{ultrasparc},
+@samp{ultrasparc3}, @samp{niagara}, @samp{niagara2}, @samp{niagara3} and
+@samp{niagara4}.  With native Solaris and GNU/Linux toolchains, @samp{native}
+can also be used.
 
 @item -mv8plus
 @itemx -mno-v8plus
@@ -18550,6 +18676,11 @@ later.
 @opindex mfix-at697f
 Enable the documented workaround for the single erratum of the Atmel AT697F
 processor (which corresponds to erratum #13 of the AT697E processor).
+
+@item -mfix-ut699
+@opindex mfix-ut699
+Enable the documented workarounds for the floating-point errata and the data
+cache nullify errata of the UT699 processor.
 @end table
 
 These @samp{-m} options are supported in addition to the above
@@ -19201,6 +19332,14 @@ instructions to throw exceptions, i.e.@: memory references or floating-point
 instructions.  It does not allow exceptions to be thrown from
 arbitrary signal handlers such as @code{SIGALRM}.
 
+@item -fdelete-dead-exceptions
+@opindex fdelete-dead-exceptions
+Consider that instructions that may throw exceptions but don't otherwise
+contribute to the execution of the program can be optimized away.
+This option is enabled by default for the Ada front end, as permitted by
+the Ada language specification.
+Optimization passes that cause dead exceptions to be removed are enabled independently at different optimization levels.
+
 @item -funwind-tables
 @opindex funwind-tables
 Similar to @option{-fexceptions}, except that it will just generate any needed
@@ -19622,6 +19761,31 @@ The @var{model} argument should be one of @code{global-dynamic},
 
 The default without @option{-fpic} is @code{initial-exec}; with
 @option{-fpic} the default is @code{global-dynamic}.
+
+@item -ftrampolines
+@opindex ftrampolines
+Always generate trampolines for pointers to nested functions.
+
+A trampoline is a small piece of data or code that is created at run
+time on the stack when the address of a nested function is taken, and
+is used to call the nested function indirectly.  For some targets, it
+is made up of data only and thus requires no special treatment.  But,
+for most targets, it is made up of code and thus requires the stack
+to be made executable in order for the program to work properly.
+
+@option{-fno-trampolines} is enabled by default to let the compiler avoid
+generating them if it computes that this is safe, on a case by case basis,
+and replace them with descriptors.  Descriptors are always made up of data
+only, but the generated code must be prepared to deal with them.
+
+This option has no effects for any other languages than Ada as of this
+writing.  Moreover, code compiled with @option{-ftrampolines} and code
+compiled with @option{-fno-trampolines} are not binary compatible if
+nested functions are present.  This option must therefore be used on
+a program-wide basis and be manipulated with extreme care.
+
+This option has no effects for targets whose trampolines are made up of
+data only, for example IA-64 targets, AIX or VMS platforms.
 
 @item -fvisibility=@var{default|internal|hidden|protected}
 @opindex fvisibility

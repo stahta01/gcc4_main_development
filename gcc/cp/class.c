@@ -38,6 +38,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-dump.h"
 #include "splay-tree.h"
 #include "pointer-set.h"
+#include "c-family/c-xref.h"
 
 /* The number of nested classes being processed.  If we are not in the
    scope of any class, this is zero.  */
@@ -6039,6 +6040,14 @@ finish_struct_1 (tree t)
 	build_primary_vtable (CLASSTYPE_PRIMARY_BINFO (t), t);
     }
 
+  /* Generate reference to t.  */
+  generate_type_reference (TYPE_NAME (t), 0, '\0');
+
+  /* Generate references to methods while we have the information about which
+     method is overriding.  */
+  for (x = TYPE_METHODS (t); x; x = TREE_CHAIN (x))
+    generate_method_decl_reference (TYPE_NAME (t), x);
+
   if (TYPE_CONTAINS_VPTR_P (t))
     {
       int vindex;
@@ -7312,6 +7321,9 @@ build_self_reference (void)
   DECL_CONTEXT (value) = current_class_type;
   DECL_ARTIFICIAL (value) = 1;
   SET_DECL_SELF_REFERENCE_P (value);
+  DECL_SOURCE_LOCATION (value) =
+    DECL_SOURCE_LOCATION (TYPE_NAME (current_class_type));
+
   set_underlying_type (value);
 
   if (processing_template_decl)

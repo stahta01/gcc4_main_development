@@ -15,6 +15,9 @@
 #elif defined (__TMS320C6X__)
   /* On TI C6X division by zero does not trap.  */
 # define DO_TEST 0
+#elif defined (__LMP__)
+  /* On LMP division by zero does not trap.  */
+# define DO_TEST 0
 #elif defined (__arm__)
  /* We cannot rely on division by zero generating a trap. */
 # define DO_TEST 0

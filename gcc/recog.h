@@ -115,6 +115,8 @@ extern int offsettable_address_addr_space_p (int, enum machine_mode, rtx,
 	offsettable_address_addr_space_p ((strict), (mode), (addr), \
 					  ADDR_SPACE_GENERIC)
 extern bool mode_dependent_address_p (rtx);
+extern bool valid_access_mode_change_p (rtx, enum machine_mode,
+                                        enum machine_mode);
 
 extern int recog (rtx, rtx, int *);
 #ifndef GENERATOR_FILE

@@ -1,5 +1,5 @@
-/* Definitions of target machine GNU compiler. 32bit VMS version.
-   Copyright (C) 2009, 2010 Free Software Foundation, Inc.
+/* Definitions of target machine GNU compiler.
+   Copyright (C) 2009, 2010, 2013 Free Software Foundation, Inc.
    Contributed by Douglas B Rupp (rupp@gnat.com).
 
 This file is part of GCC.
@@ -25,6 +25,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "vms-protos.h"
 #include "tm.h"
 #include "ggc.h"
+#include "output.h"
 
 /* Correlation of standard CRTL names with DECCRTL function names.  */
 
@@ -90,6 +91,17 @@ vms_add_crtl_xlat (const char *name, size_t nlen,
   VEC_safe_push (tree, gc, aliases_id, targ);
 
   /* printf ("vms: %s (%p) -> %.*s\n", name, targ, id_len, id_str); */
+}
+
+/* Output a float representation flag and file end.  */
+
+void
+vms_file_end (void)
+{
+#ifdef USING_ELFOS_H /* Restrict output to ia64-hp-openvms target.  */
+    fprintf (asm_out_file, "\t.float_flags %c\n",
+             vms_float_format == ' ' ? 'I' : vms_float_format);
+#endif
 }
 
 /* Do VMS specific stuff on builtins: disable the ones that are not
